@@ -1,0 +1,13 @@
+# @package _global_
+action_name: example
+
+aim:
+  repo: ./
+
+action_config:
+  workdir: ./
+  experiment_name: test_evaluate
+
+  tasks:
+    - task: example
+        ...
