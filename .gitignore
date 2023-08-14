@@ -186,3 +186,5 @@ ipython_config.py
 .aim
 outputs
 models--*
+.DS_Store
+Icon*
