@@ -6,7 +6,7 @@ aim:
 
 action_config:
   workdir: ./
-  experiment_name: test_evaluate
+  experiment_name: Example Experiment
 
   tasks:
     - task: example

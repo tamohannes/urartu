@@ -23,7 +23,7 @@ urartu --help
 
 ## Example Usage
 
-Running an action with Urartu is as easy as waving a wand. Just provide the name of the configuration file containing the action, followed by the action name itself. 🪄 For instance, let's say you want to ignite the `example` action – an action that's a bit shy on functionality for now.
+Running an action with UrarTU is as easy as waving a wand. Just provide the name of the configuration file containing the action, followed by the action name itself. 🪄 For instance, let's say you want to ignite the `example` action – an action that's a bit shy on functionality for now.
 
 Simply execute the following command in your terminal:
 ```bash
@@ -31,7 +31,7 @@ urartu action_config=example
 ```
 
 ## Exploring the Experiments
-Unveiling Insights with Ease! 🔍 Urartu, pairs up with [Aim](https://github.com/aimhubio/aim), a remarkable open-source AI metadata tracker designed to be both intuitive and potent. To dive into the wealth of metrics that Aim effortlessly captures, simply follow these steps:
+Unveiling Insights with Ease! 🔍 UrarTU, pairs up with [Aim](https://github.com/aimhubio/aim), a remarkable open-source AI metadata tracker designed to be both intuitive and potent. To dive into the wealth of metrics that Aim effortlessly captures, simply follow these steps:
 - Navigate to the directory housing the .aim repository.
 - Execute the command that sparks the magic:
 ```bash
@@ -45,20 +45,28 @@ Within UrarTU lies a well-organized structure that simplifies your interaction w
 
 ### Configs: Tailoring Your Setup
 
+The default configs which shape the way of configs are defined under `urartu/config` directory:
 - `urartu/config/main.yaml`: This core configuration file sets the foundation for default settings, covering all available keys within the system.
 - `urartu/config/action_config` Directory: A designated space for specific action configurations.
 
 
-#### Crafting Customizations
+### Crafting Customizations
 
-Adapting configurations is straightforward through two approaches:
+Tailoring configurations to your needs is a breeze with UrarTU. You have two flexible options:
 
-1. CLI Approach: Enhance your commands with specific key-value pairs right in the CLI. For example, altering your workdir path is as simple as:
-```bash
-urartu action_config=example action_config.workdir=PATH_TO_WORKDIR
-```
+1. **Custom Config Files**: To simplify configuration adjustments, UrarTU provides a dedicated `configs` directory where you can store personalized configuration files. These files seamlessly integrate with Hydra's search path. The directory structure mirrors that of `urartu/config`. You can define project-specific configurations in specially named files. For instance, an `example.yaml` file within the `configs` directory can house all the configurations specific to your 'example' project, with customized settings.
 
-2. Custom Config Files: For a more streamlined experience, custom config files come to the fore. The `configs_{os_username}` directory hosts personalized configurations that seamlessly integrate with hydra’s search path. This directory structure echoes that of `urartu/config`. As an illustration, a directory named `configs_tamoyan` could house an `example.yaml` file within `action_config` directory with tailored settings. No extra steps are required to implement these changes! Your customizations seamlessly load and override the configs, making the process smooth and hassle-free. ✨
+    - **Personalized User Configs**: To further tailor configurations for individual users, create a directory named `configs_{username}` at the same level as the `configs` directory, where `{username}` represents your operating system username. The beauty of this approach is that there are no additional steps required. Your customizations will smoothly load and override the default configurations, ensuring a seamless and hassle-free experience. ✨
+
+    The order of precedence for configuration overrides is as follows: `urartu/config`, `configs`, `configs_{username}`, giving priority to user-specific configurations.
+
+2. **CLI Approach**: For those who prefer a command-line interface (CLI) approach, UrarTU offers a convenient method. You can enhance your commands with specific key-value pairs directly in the CLI. For example, modifying your working directory path is as simple as:
+
+    ```bash
+    urartu action_config=example action_config.workdir=PATH_TO_WORKDIR
+    ```
+
+Choose the method that suits your workflow best and enjoy the flexibility UrarTU provides for crafting custom configurations.
 
 
 ### Actions: Shaping Functionality
@@ -76,5 +84,5 @@ With UrarTU, launching actions becomes a breeze, offering you two distinctive pa
 Experience the freedom to choose your launch adventure, tailored to your needs and aspirations!
 
 
-And just like that, you're all set to embark on your machine learning journey with Urartu! 🌟
+And just like that, you're all set to embark on your machine learning journey with UrarTU! 🌟
 If you run into any hiccups along the way or have any suggestions, don't hesitate to open an issue for assistance.
