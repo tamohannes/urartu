@@ -1,0 +1,21 @@
+# @package _global_
+action_name: text_classification
+
+aim:
+  repo: ./
+
+action_config:
+  workdir: ./
+  experiment_name: Text Classification
+
+  tasks:
+    - task: text_classification
+      dataset:
+        name: imdb
+        split: test
+      model:
+        name: facebook/bart-large-mnli
+        cache_dir: ""
+        dtype: torch.float16
+      metric:
+        name: accuracy

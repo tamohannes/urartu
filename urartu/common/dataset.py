@@ -11,7 +11,7 @@ class Dataset:
     def get_dataset(cfg: List[Dict[str, Any]]):
         return load_dataset(
             cfg.name,
-            cfg.subset,
+            cfg.get("subset"),
             split=cfg.get("split"),
         )
 

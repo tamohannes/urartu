@@ -21,8 +21,9 @@ class Model:
 
     @staticmethod
     def get_pipe(cfg: List[Dict[str, Any]]) -> AutoModelWithLMHead:
+        import torch
+
         pipe = pipeline(
-            "text-generation",
             model=cfg.name,
             torch_dtype=eval(cfg.dtype),
             device_map=AUTO_DEVICE,
