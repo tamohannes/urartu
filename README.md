@@ -2,6 +2,7 @@
 
 Harness the power of UrarTU, a versatile ML framework meticulously designed to provide intuitive abstractions of familiar pipeline checkpoints. With a .yaml file-based configuration system, and the added convenience of seamless Slurm job submission on clusters, UrarTU takes the complexity out of machine learning, so you can focus on what truly matters! 🚀
 
+![urartu_schema drawio](https://github.com/tmynn/urartu/assets/23078323/1e2e4276-5136-47ab-b2e1-6b92f7a08adf)
 
 ## Installation
 
