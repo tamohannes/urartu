@@ -205,20 +205,20 @@ You can streamline your experimentation by using Hydra's `--multirun` flag, allo
 
 1. Add a Hydra sweeper configuration at the end of your config file:
     
-    ```yaml
-    hydra:
-    	sweeper:
-    		params:
-    			++action_config.tasks.0.model.dtype: torch.float32, torch.bfloat16
-    ```
+```yaml
+hydra:
+  sweeper:
+    params:
+      ++action_config.tasks.0.model.dtype: torch.float32, torch.bfloat16
+```
     
-    The double plus sign (**`++`**) will append this configuration to the existing one, resulting in three runs with **`action_config.tasks.0.model.dtype`** set to **`torch.float16`**, **`torch.float32`**, and **`torch.bfloat16`**.
+The double plus sign (**`++`**) will append this configuration to the existing one, resulting in three runs with **`action_config.tasks.0.model.dtype`** set to **`torch.float16`**, **`torch.float32`**, and **`torch.bfloat16`**.
     
 2. Execute the following command to start the batch runs:
     
-    ```bash
-    urartu --multirun action_config=text_classification
-    ```
+```bash
+urartu --multirun action_config=text_classification
+```
     
 
 This approach simplifies the process of running experiments with various configurations, making it easier to explore and optimize your models.
