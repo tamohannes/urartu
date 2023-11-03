@@ -4,7 +4,7 @@ Welcome to the UrarTU framework! This guide will lead you through the essential 
 
 For installation instructions and additional information, please visit the project's GitHub page: **[UrarTU GitHub Repository](https://github.com/tmynn/urartu)**.
 
-![Figure 1: Schematic Layout of the UrarTU.](Getting%20Started%20with%20UrarTU%203a09275115aa4fd183b47af4df104d3b/urartu_schema.drawio.png)
+![Figure 1: Schematic Layout of the UrarTU.](https://github.com/tmynn/urartu/assets/23078323/33bd1271-d3a5-4f07-b206-f45c711ca0d9)
 
 Figure 1: Schematic Layout of the UrarTU.
 
@@ -205,20 +205,20 @@ You can streamline your experimentation by using Hydra's `--multirun` flag, allo
 
 1. Add a Hydra sweeper configuration at the end of your config file:
     
-    ```yaml
-    hydra:
-    	sweeper:
-    		params:
-    			++action_config.tasks.0.model.dtype: torch.float32, torch.bfloat16
-    ```
+```yaml
+hydra:
+  sweeper:
+    params:
+      ++action_config.tasks.0.model.dtype: torch.float32, torch.bfloat16
+```
     
-    The double plus sign (**`++`**) will append this configuration to the existing one, resulting in three runs with **`action_config.tasks.0.model.dtype`** set to **`torch.float16`**, **`torch.float32`**, and **`torch.bfloat16`**.
+The double plus sign (**`++`**) will append this configuration to the existing one, resulting in three runs with **`action_config.tasks.0.model.dtype`** set to **`torch.float16`**, **`torch.float32`**, and **`torch.bfloat16`**.
     
 2. Execute the following command to start the batch runs:
     
-    ```bash
-    urartu --multirun action_config=text_classification
-    ```
+```bash
+urartu --multirun action_config=text_classification
+```
     
 
 This approach simplifies the process of running experiments with various configurations, making it easier to explore and optimize your models.
@@ -233,7 +233,8 @@ aim up
 
 You can expect a similar experience as demonstrated in the following image:
 
-[Screen Recording 2023-08-25 at 3.59.00 AM.mov](Getting%20Started%20with%20UrarTU%203a09275115aa4fd183b47af4df104d3b/Screen_Recording_2023-08-25_at_3.59.00_AM.mov)
+https://github.com/tmynn/urartu/assets/23078323/11705f35-e3df-41f0-b0d1-42eb846a5921
+
 
 ## **Resources**
 
