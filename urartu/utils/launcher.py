@@ -1,4 +1,4 @@
-import time
+from datetime import datetime
 from pathlib import Path
 from typing import Dict
 
@@ -12,7 +12,7 @@ from urartu.utils.job import ResumableJob, ResumableSlurmJob
 def create_submitit_executor(cfg: Dict):
     import submitit
 
-    log_folder = Path(cfg.slurm.log_folder).joinpath(str(time.time()))
+    log_folder = Path(cfg.slurm.log_folder).joinpath(datetime.now().strftime("%d-%m-%y"))
     makedir(log_folder)
     assert g_pathmgr.exists(
         log_folder
