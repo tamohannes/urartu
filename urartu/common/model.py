@@ -1,57 +1,22 @@
 from typing import Any, Dict, List
 
-from transformers import (AutoModel, AutoModelForCausalLM,
-                          AutoModelForSeq2SeqLM, AutoModelWithLMHead,
-                          AutoTokenizer, pipeline)
-
-from urartu.common.device import AUTO_DEVICE, DEVICE
+from urartu.common.device import DEVICE
 
 
 class Model:
-    @staticmethod
-    def get_clm(cfg: List[Dict[str, Any]]) -> AutoModelWithLMHead:
-        model = AutoModelForCausalLM.from_pretrained(
-            cfg.name,
-            cache_dir=cfg.cache_dir,
-            device_map=AUTO_DEVICE,
-        )
-        tokenizer = AutoTokenizer.from_pretrained(cfg.name, padding_side="left")
+    def __init__(self, cfg: List[Dict[str, Any]]):
+        self.cfg = cfg
+        self.aim_run = None
+        self.model = None
+        self.tokenizer = None
+        self._load_model()
 
-        return model, tokenizer
+    def _load_model(self):
+        raise NotImplementedError("method '_load_model' is not implemented")
 
-    @staticmethod
-    def get_pipe(cfg: List[Dict[str, Any]]) -> AutoModelWithLMHead:
-        import torch
+    def generate(self, prompt):
+        raise NotImplementedError("method 'generate' is not implemented")
 
-        pipe = pipeline(
-            model=cfg.name,
-            torch_dtype=eval(cfg.dtype),
-            device_map=AUTO_DEVICE,
-        )
-        tokenizer = AutoTokenizer.from_pretrained(cfg.name)
-
-        return pipe, tokenizer
-
-    @staticmethod
-    def get_seq2seq_model(cfg: List[Dict[str, Any]]) -> AutoModelWithLMHead:
-        tokenizer = AutoTokenizer.from_pretrained(cfg.name)
-        model = AutoModelForSeq2SeqLM.from_pretrained(cfg.name)
-        model = model.to(DEVICE)
-
-        return model, tokenizer
-
-    @staticmethod
-    def get_model(cfg: List[Dict[str, Any]]) -> AutoModelWithLMHead:
-        model = AutoModelWithLMHead.from_pretrained(cfg.name)
-        tokenizer = AutoTokenizer.from_pretrained(cfg.name)
-        return model, tokenizer
-
-    @staticmethod
-    def get_models(cfg: List[Dict[str, AutoModel]]) -> List[AutoModel]:
-        models: List[AutoModel] = []
-        for model_cfg in cfg:
-            models.append(Model.get_model(model_cfg))
-        return models
 
     @staticmethod
     def collate_tokenize(data, tokenizer, dataset_cfg):
