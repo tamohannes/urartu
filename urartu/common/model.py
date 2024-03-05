@@ -6,7 +6,6 @@ from urartu.common.device import DEVICE
 class Model:
     def __init__(self, cfg: List[Dict[str, Any]]):
         self.cfg = cfg
-        self.aim_run = None
         self.model = None
         self.tokenizer = None
         self._load_model()
@@ -16,7 +15,6 @@ class Model:
 
     def generate(self, prompt):
         raise NotImplementedError("method 'generate' is not implemented")
-
 
     @staticmethod
     def collate_tokenize(data, tokenizer, dataset_cfg):

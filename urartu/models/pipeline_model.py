@@ -6,8 +6,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
 
 class PipelineModel(Model):
-    def __init__(self, cfg, role) -> None:
-        super().__init__(cfg, role)
+    def __init__(self, cfg) -> None:
+        super().__init__(cfg)
 
     def _load_model(self) -> Tuple[AutoModelForCausalLM, AutoTokenizer]:
         model = AutoModelForCausalLM.from_pretrained(
