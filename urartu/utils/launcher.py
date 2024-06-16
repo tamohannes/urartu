@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Dict
@@ -46,7 +47,7 @@ def launch_on_slurm(cfg: Dict, action_name: str, aim_run: Run):
     runner = ResumableSlurmJob(action_name=action_name, cfg=cfg, aim_run=aim_run)
 
     job = executor.submit(runner)
-    print(f"SUBMITTED: {job.job_id}")
+    logging.info(f"SUBMITTED: {job.job_id}")
 
     return job
 

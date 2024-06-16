@@ -1,3 +1,4 @@
+import hydra
 from typing import Any, Dict, List
 
 from urartu.common.device import DEVICE
@@ -10,23 +11,27 @@ class Model:
         self.tokenizer = None
         self._load_model()
 
+    @staticmethod
+    def get_model(cfg):
+        return hydra.utils.instantiate(cfg.type, cfg)
+
     def _load_model(self):
         raise NotImplementedError("method '_load_model' is not implemented")
+
+    # def __call__(self, args):
+    #     return self.model(**args)
 
     def generate(self, prompt):
         raise NotImplementedError("method 'generate' is not implemented")
 
     @staticmethod
-    def collate_tokenize(data, tokenizer, dataset_cfg):
+    def collate_tokenize(data, tokenizer, input_key):
         input_batch = []
         for element in data:
-            if isinstance(element[dataset_cfg.input_key], list):
-                input_text = " ".join(element[dataset_cfg.input_key])
+            if isinstance(element[input_key], list):
+                input_text = " ".join(element[input_key])
             else:
-                input_text = element[dataset_cfg.input_key]
+                input_text = element[input_key]
             input_batch.append(input_text)
-        tokenized = tokenizer(
-            input_batch, padding="longest", truncation=True, return_tensors="pt"
-        )
-        tokenized.to(DEVICE)
+        tokenized = tokenizer(input_batch, padding="longest", truncation=True, return_tensors="pt").to(DEVICE)
         return tokenized

@@ -1,7 +1,8 @@
 from typing import Tuple
 
-from autoeval.common.device import DEVICE
-from autoeval.common.model import Model
+import torch
+from urartu.common.device import DEVICE
+from urartu.common.model import Model
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
 
@@ -12,10 +13,10 @@ class PipelineModel(Model):
     def _load_model(self) -> Tuple[AutoModelForCausalLM, AutoTokenizer]:
         model = AutoModelForCausalLM.from_pretrained(
             self.cfg.name,
-            cache_dir=self.cfg.cache_dir,
+            cache_dir=self.cfg.get("cache_dir"),
             device_map=DEVICE,
-            torch_dtype=eval(self.cfg.dtype),
-            token=self.cfg.api_token,
+            torch_dtype=eval(self.cfg.get("dtype")),
+            token=self.cfg.get("api_token"),
         )
         self.tokenizer = AutoTokenizer.from_pretrained(self.cfg.name)
 
@@ -23,7 +24,7 @@ class PipelineModel(Model):
             "text-generation",
             model=model,
             tokenizer=self.tokenizer,
-            torch_dtype=eval(self.cfg.dtype),
+            torch_dtype=eval(self.cfg.get("dtype")),
             device_map=DEVICE,
             eos_token_id=self.tokenizer.eos_token_id,
         )

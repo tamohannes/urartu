@@ -1,6 +1,9 @@
 import hydra
 from aim import Run
 from omegaconf import OmegaConf
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 from urartu.utils.launcher import launch, launch_on_slurm
 from urartu.utils.slurm import is_submitit_available

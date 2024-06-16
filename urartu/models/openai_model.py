@@ -1,7 +1,7 @@
 from typing import Tuple, Union
 
 import tiktoken
-from autoeval.common.model import Model
+from urartu.common.model import Model
 from langchain.schema import HumanMessage
 from langchain_openai import AzureChatOpenAI
 from transformers import AutoModelForCausalLM, AutoTokenizer
