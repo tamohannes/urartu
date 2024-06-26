@@ -1,6 +1,7 @@
 import os
 
 from setuptools import find_packages, setup
+from pathlib import Path
 
 here = os.path.abspath(os.path.dirname(__file__))
 
@@ -18,11 +19,16 @@ NAME = "urartu"
 DESCRIPTION = "ML framework"
 VERSION = __version__
 REQUIRES_PYTHON = ">=3.10.0"
+this_directory = Path(__file__).parent
+long_description = (this_directory / "README.md").read_text()
+
 
 setup(
     name=NAME,
     version=VERSION,
     description=DESCRIPTION,
+    long_description=long_description,
+    long_description_content_type='text/markdown'
     python_requires=REQUIRES_PYTHON,
     install_requires=requirements,
     packages=find_packages("."),
