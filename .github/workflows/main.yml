@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+
   workflow_dispatch:
 
 jobs:
@@ -13,15 +14,23 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
       - name: Check files
         run: |
+          # Define the list of filenames you want to check
           FILES_TO_CHECK=("LICENSE" "README.md" "requirements.txt" "requirements-dev.txt" "setup.py")
+
+          # Initialize a variable to track missing files
           MISSING_FILES=()
+
+          # Check if each file exists in the root directory
           for FILE in "${FILES_TO_CHECK[@]}"; do
             if [ ! -f "$FILE" ]; then
               MISSING_FILES+=("$FILE")
             fi
           done
+
+          # Output the missing files
           if [ ${#MISSING_FILES[@]} -eq 0 ]; then
             echo "All files exist."
           else
@@ -31,6 +40,7 @@ jobs:
             done
             echo "::error::One or more files are missing."
             exit 1
+          fi
 
   linter:
     runs-on: ubuntu-latest
@@ -38,17 +48,21 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
           python-version: 3.9
+
       - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+        run: |
+          pip install -r requirements-dev.txt
+
       - name: Analysing the code with pylint
         run: |
           pylint --disable=trailing-whitespace,missing-class-docstring,missing-final-newline,trailing-newlines \
-                 --fail-under=9.0 \
-                 $(git ls-files '*.py') || echo "::warning::Pylint check failed, but the workflow will continue."
+                  --fail-under=9.0 \
+                  $(git ls-files '*.py') || echo "::warning::Pylint check failed, but the workflow will continue."
 
   python-build-n-publish:
     name: Build and publish Python distribution
@@ -56,7 +70,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
           python-version: '3.x'
       - name: Install dependencies
