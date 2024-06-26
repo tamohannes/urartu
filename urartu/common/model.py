@@ -1,5 +1,6 @@
-import hydra
 from typing import Any, Dict, List
+
+import hydra
 
 from urartu.common.device import DEVICE
 
@@ -33,5 +34,7 @@ class Model:
             else:
                 input_text = element[input_key]
             input_batch.append(input_text)
-        tokenized = tokenizer(input_batch, padding="longest", truncation=True, return_tensors="pt").to(DEVICE)
+        tokenized = tokenizer(
+            input_batch, padding="longest", truncation=True, return_tensors="pt"
+        ).to(DEVICE)
         return tokenized

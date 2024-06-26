@@ -1,9 +1,10 @@
 from typing import Tuple
 
 import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
 from urartu.common.device import DEVICE
 from urartu.common.model import Model
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 class CausalLMModel(Model):
@@ -31,9 +32,11 @@ class CausalLMModel(Model):
             generate_cfg = self.cfg.get("generate")
         self.model.eval()
 
-        prompt_tokenized = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
-        prompt_tensor = prompt_tokenized['input_ids'].to(self.model.device)
-        attention_mask = prompt_tokenized['attention_mask'].to(self.model.device)
+        prompt_tokenized = self.tokenizer(
+            prompt, return_tensors="pt", padding=True, truncation=True
+        )
+        prompt_tensor = prompt_tokenized["input_ids"].to(self.model.device)
+        attention_mask = prompt_tokenized["attention_mask"].to(self.model.device)
         with torch.no_grad():
             output_tokenized = self.model.generate(
                 input_ids=prompt_tensor, attention_mask=attention_mask, **generate_cfg

@@ -1,6 +1,6 @@
 import logging
-import torch
 
+import torch
 
 DEVICE = None
 

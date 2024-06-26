@@ -39,9 +39,11 @@ def create_submitit_executor(cfg: Dict):
     return executor
 
 
-def launch_on_slurm(cfg: Dict, action_name: str, aim_run: Run):
+def launch_on_slurm(module: str, action_name: str, cfg: Dict, aim_run: Run):
     executor = create_submitit_executor(cfg)
-    trainer = ResumableSlurmJob(action_name=action_name, cfg=cfg, aim_run=aim_run)
+    trainer = ResumableSlurmJob(
+        module=module, action_name=action_name, cfg=cfg, aim_run=aim_run
+    )
 
     job = executor.submit(trainer)
     print(f"SUBMITTED: {job.job_id}")
@@ -49,6 +51,8 @@ def launch_on_slurm(cfg: Dict, action_name: str, aim_run: Run):
     return job
 
 
-def launch(cfg: Dict, action_name: str, aim_run: Run):
-    trainer = ResumableJob(action_name=action_name, cfg=cfg, aim_run=aim_run)
+def launch(module: str, action_name: str, cfg: Dict, aim_run: Run):
+    trainer = ResumableJob(
+        module=module, action_name=action_name, cfg=cfg, aim_run=aim_run
+    )
     trainer()
