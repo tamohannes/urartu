@@ -16,7 +16,7 @@ with open(os.path.join(here, "requirements.txt"), "r") as f:
 
 # Package info
 NAME = "urartu"
-DESCRIPTION = "ML framework"
+DESCRIPTION = "An open-source NLP framework that offers high-level wrappers designed for effortless launch, enhanced reproducibility, superior control, and unmatched flexibility for your experiments."
 VERSION = __version__
 REQUIRES_PYTHON = ">=3.10.0"
 this_directory = Path(__file__).parent
