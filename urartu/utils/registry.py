@@ -2,9 +2,7 @@ import yaml
 import os
 from pathlib import Path
 
-current_file_directory = os.path.dirname(os.path.abspath(__file__))
-module_root_directory = os.path.abspath(os.path.join(current_file_directory, os.pardir))
-registry_file_path = Path(module_root_directory).parent.joinpath("registry.yaml")
+registry_file_path = Path(os.path.dirname(os.path.abspath(__file__))).parent.joinpath("registry.yaml")
 
 
 class Registry:
@@ -17,7 +15,9 @@ class Registry:
         if module_name in file_content:
             raise ValueError(f"Module with name '{module_name}' already exists in the registery, use a different name")
         if str(module_root_dir) in file_content.values():
-            raise ValueError(f"Module with path '{str(module_root_dir)}' already exists in the registery, use a different path")
+            raise ValueError(
+                f"Module with path '{str(module_root_dir)}' already exists in the registery, use a different path"
+            )
         if not module_root_dir.exists() or module_root_dir.is_file():
             raise FileNotFoundError(f"Couldn't find directory: {module_root_dir}")
         else:
@@ -38,7 +38,9 @@ class Registry:
             file_content = yaml.safe_load(file)
 
         if file_content is None:
-            raise RuntimeError(f"Registery is empty, register a module using `urartu register --name='NAME' --path='PATH'` command.")
+            raise RuntimeError(
+                f"Registery is empty, register a module using `urartu register --name='NAME' --path='PATH'` command."
+            )
 
         with open(Registry.REGISTRY_FILE_PATH, "r") as file:
             file_content = yaml.safe_load(file)
@@ -56,5 +58,7 @@ class Registry:
         file_content = Registry.load_file_content()
 
         if module_name not in file_content:
-            raise KeyError(f"Registery with name '{module_name}' is not found, start with registering a module using `urartu register --name='NAME' --path='PATH'` command.")
+            raise KeyError(
+                f"Registery with name '{module_name}' is not found, start with registering a module using `urartu register --name='NAME' --path='PATH'` command."
+            )
         return file_content[module_name]
