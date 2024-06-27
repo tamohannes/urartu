@@ -32,18 +32,16 @@ class Registry:
     def load_file_content():
         if not Registry.REGISTRY_FILE_PATH.exists():
             Registry.REGISTRY_FILE_PATH.touch()
-            return {}
-
-        with open(Registry.REGISTRY_FILE_PATH, "r") as file:
-            file_content = yaml.safe_load(file)
-
+            file_content = None
+        else:
+            with open(Registry.REGISTRY_FILE_PATH, "r") as file:
+                file_content = yaml.safe_load(file)
+        
         if file_content is None:
-            raise RuntimeError(
-                f"Registery is empty, register a module using `urartu register --name='NAME' --path='PATH'` command."
-            )
-
-        with open(Registry.REGISTRY_FILE_PATH, "r") as file:
-            file_content = yaml.safe_load(file)
+            return {}
+            # raise RuntimeError(
+            #     f"Registery is empty, register a module using `urartu register --name='NAME' --path='PATH'` command."
+            # )
 
         return file_content
 
