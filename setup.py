@@ -39,7 +39,7 @@ setup(
             "urartu=urartu.__init__:main",
         ],
         "hydra.plugins": [
-            "urartu_plugin = hydra_plugins.urartu_plugin.urartu_plugin:UrartuPlugin",
+            "urartu_plugin = urartu.hydra_plugins.urartu_plugin.urartu_plugin:UrartuPlugin",
         ],
     },
 )
