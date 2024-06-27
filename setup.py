@@ -37,9 +37,6 @@ setup(
     entry_points={
         "console_scripts": [
             "urartu=urartu.__init__:main",
-        ],
-        "hydra.plugins": [
-            "urartu_plugin = urartu.hydra_plugins.urartu_plugin.urartu_plugin:UrartuPlugin",
-        ],
+        ]
     },
 )

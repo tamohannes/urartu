@@ -4,16 +4,21 @@ import re
 
 from aim import Run
 from hydra import compose, initialize
-
+from hydra.core.plugins import Plugins
 from .command import Command
-
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
-
 from ..utils.launcher import launch, launch_on_slurm
 from ..utils.slurm import is_submitit_available
 from ..utils.registry import Registry
+from ..utils.hydra_plugin import UrartuPlugin
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+
+def register_my_plugin() -> None:
+    Plugins.instance().register(UrartuPlugin)
+
+
+register_my_plugin()
 
 
 @Command.register("launch")
@@ -22,9 +27,7 @@ class Launch(Command):
     Launches an action from a specific module
     """
 
-    def add_subparser(
-        self, parser: argparse._SubParsersAction
-    ) -> argparse.ArgumentParser:
+    def add_subparser(self, parser: argparse._SubParsersAction) -> argparse.ArgumentParser:
         description = """urartu: launcher"""
         subparser = parser.add_parser(
             self.name,
@@ -33,9 +36,7 @@ class Launch(Command):
         )
 
         subparser.add_argument("--name", type=str, help="name of the project/module")
-        subparser.add_argument(
-            "module_args", nargs=argparse.REMAINDER, help="module arguments"
-        )
+        subparser.add_argument("module_args", nargs=argparse.REMAINDER, help="module arguments")
 
         subparser.set_defaults(fire=self._launch)
 
@@ -44,7 +45,7 @@ class Launch(Command):
     def _launch(self, args: argparse.Namespace):
         module_name = re.sub(r"[^A-Za-z0-9]+", "", args.name)
         module_path = Registry.get_module_path_by_name(module_name)
- 
+
         with initialize(version_base=None, config_path="../config"):
             cfg = compose(config_name="main", overrides=args.module_args)
 
@@ -55,9 +56,7 @@ class Launch(Command):
         aim_run.set("cfg", cfg, strict=False)
 
         if cfg.slurm.use_slurm:
-            assert (
-                is_submitit_available()
-            ), "Please 'pip install submitit' to schedule jobs on SLURM"
+            assert is_submitit_available(), "Please 'pip install submitit' to schedule jobs on SLURM"
 
             launch_on_slurm(
                 module=module_path,
