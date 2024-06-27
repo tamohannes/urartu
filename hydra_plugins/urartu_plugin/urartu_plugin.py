@@ -8,7 +8,7 @@ current_user = get_current_user()
 registry_paths = Registry.get_module_paths()
 
 
-class urartuPlugin(SearchPathPlugin):
+class UrartuPlugin(SearchPathPlugin):
     def manipulate_search_path(self, search_path: ConfigSearchPath) -> None:
         for registry_path in registry_paths:
             search_path.prepend(provider="urartu", path=f"{registry_path}//configs")
