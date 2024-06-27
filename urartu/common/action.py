@@ -1,7 +1,7 @@
 from aim import Run
 from omegaconf import DictConfig
 
-from .device import set_device
+from .device import Device
 
 
 class Action:
@@ -10,4 +10,4 @@ class Action:
         self.action_cfg = cfg.action_config
         self.task_cfg = self.action_cfg.get("task")
         self.aim_run = aim_run
-        set_device(self.action_cfg.device)
+        Device.set_device(self.action_cfg.device)

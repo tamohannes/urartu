@@ -2,7 +2,7 @@ from typing import Any, Dict, List
 
 import hydra
 
-from .device import DEVICE
+from .device import Device
 
 
 class Model:
@@ -36,5 +36,5 @@ class Model:
             input_batch.append(input_text)
         tokenized = tokenizer(
             input_batch, padding="longest", truncation=True, return_tensors="pt"
-        ).to(DEVICE)
+        ).to(Device.get_device())
         return tokenized

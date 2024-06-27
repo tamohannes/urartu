@@ -3,7 +3,7 @@ from typing import Tuple
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from ..common.device import DEVICE
+from ..common.device import Device
 from ..common.model import Model
 
 
@@ -15,7 +15,7 @@ class CausalLMModel(Model):
         self.model = AutoModelForCausalLM.from_pretrained(
             self.cfg.name,
             cache_dir=self.cfg.get("cache_dir"),
-            device_map=DEVICE,
+            device_map=Device.get_device(),
             torch_dtype=eval(self.cfg.get("dtype")),
             token=self.cfg.get("api_token"),
         )

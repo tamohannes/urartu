@@ -2,16 +2,22 @@ import logging
 
 import torch
 
-DEVICE = None
 
+class Device:
+    DEVICE = None
 
-def set_device(device_name):
-    if device_name == "auto":
-        DEVICE = "auto"
-    elif device_name == "cuda":
-        assert device_name == "cuda" and torch.cuda.is_available()
-        DEVICE = torch.device("cuda")
-    else:
-        DEVICE = torch.device("cpu")
+    @staticmethod
+    def set_device(device_name):
+        if device_name == "auto":
+            Device.DEVICE = "auto"
+        elif device_name == "cuda":
+            assert device_name == "cuda" and torch.cuda.is_available()
+            Device.DEVICE = torch.device("cuda")
+        else:
+            Device.DEVICE = torch.device("cpu")
 
-    logging.info(f"Using DEVICE: {DEVICE}")
+        logging.info(f"Using DEVICE: {Device.DEVICE}")
+
+    @staticmethod
+    def get_device():
+        return Device.DEVICE

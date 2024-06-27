@@ -5,6 +5,7 @@ import re
 from aim import Run
 from hydra import compose, initialize
 from hydra.core.plugins import Plugins
+from omegaconf import OmegaConf
 from .command import Command
 from ..utils.launcher import launch, launch_on_slurm
 from ..utils.slurm import is_submitit_available
@@ -48,6 +49,7 @@ class Launch(Command):
 
         with initialize(version_base=None, config_path="../config"):
             cfg = compose(config_name="main", overrides=args.module_args)
+        cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True, enum_to_str=True))
 
         aim_run = Run(
             repo=cfg.aim.repo,
