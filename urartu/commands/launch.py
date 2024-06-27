@@ -1,22 +1,19 @@
 import argparse
 import logging
 import re
-import sys
 
-import yaml
 from aim import Run
 from hydra import compose, initialize
 
 from .command import Command
-from .register import Register
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-from urartu.utils.launcher import launch, launch_on_slurm
-from urartu.utils.slurm import is_submitit_available
-from urartu.utils.registry import Registry
+from ..utils.launcher import launch, launch_on_slurm
+from ..utils.slurm import is_submitit_available
+from ..utils.registry import Registry
 
 
 @Command.register("launch")

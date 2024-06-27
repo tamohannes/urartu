@@ -3,8 +3,8 @@ import logging
 import re
 from pathlib import Path
 
-from urartu.commands.command import Command
-from urartu.utils.registry import Registry
+from .command import Command
+from ..utils.registry import Registry
 
 
 @Command.register("register")

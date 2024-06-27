@@ -3,7 +3,7 @@ from typing import Callable, Dict, Optional, Type, TypeVar
 
 from overrides import overrides
 
-from urartu.utils.registrable import Registrable
+from ..utils.registrable import Registrable
 
 T = TypeVar("T", bound="Command")
 

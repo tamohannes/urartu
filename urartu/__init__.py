@@ -1,4 +1,4 @@
-from urartu.commands import main
+from commands import main
 
 if __name__ == "__main__":
     main()

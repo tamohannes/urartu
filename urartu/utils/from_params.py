@@ -18,8 +18,8 @@ from typing import (
     cast,
 )
 
-from urartu.utils.lazy import Lazy
-from urartu.utils.params import Params
+from .lazy import Lazy
+from .params import Params
 
 logger = logging.getLogger(__name__)
 

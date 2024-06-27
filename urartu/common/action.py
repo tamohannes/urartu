@@ -1,7 +1,7 @@
 from aim import Run
 from omegaconf import DictConfig
 
-from urartu.common.device import set_device
+from .device import set_device
 
 
 class Action:

@@ -1,7 +1,7 @@
 import inspect
 from typing import Callable, Generic, Type, TypeVar, Union
 
-from urartu.utils.params import Params
+from .params import Params
 
 T = TypeVar("T")
 

@@ -2,7 +2,7 @@ import importlib
 from collections import defaultdict
 from typing import Callable, Dict, List, Optional, Tuple, Type, TypeVar
 
-from urartu.utils.from_params import FromParams
+from .from_params import FromParams
 
 T = TypeVar("T", bound="Registrable")
 

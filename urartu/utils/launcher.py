@@ -5,8 +5,8 @@ from typing import Dict
 from aim import Run
 from iopath.common.file_io import g_pathmgr
 
-from urartu.utils.io import makedir
-from urartu.utils.job import ResumableJob, ResumableSlurmJob
+from .io import makedir
+from .job import ResumableJob, ResumableSlurmJob
 
 
 def create_submitit_executor(cfg: Dict):

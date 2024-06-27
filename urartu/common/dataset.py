@@ -3,7 +3,7 @@ from typing import Any, Dict, List
 import hydra
 from torch.utils.data import DataLoader
 
-from urartu.common.model import Model
+from .model import Model
 
 
 class Dataset:

@@ -2,7 +2,7 @@ from typing import Any, Dict, List
 
 import hydra
 
-from urartu.common.device import DEVICE
+from .device import DEVICE
 
 
 class Model:

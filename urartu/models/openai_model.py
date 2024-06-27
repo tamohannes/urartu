@@ -5,7 +5,7 @@ from langchain.schema import HumanMessage
 from langchain_openai import AzureChatOpenAI
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from urartu.common.model import Model
+from ..common.model import Model
 
 
 class OpenAIModel(Model):

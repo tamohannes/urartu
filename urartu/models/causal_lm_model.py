@@ -3,8 +3,8 @@ from typing import Tuple
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from urartu.common.device import DEVICE
-from urartu.common.model import Model
+from ..common.device import DEVICE
+from ..common.model import Model
 
 
 class CausalLMModel(Model):
