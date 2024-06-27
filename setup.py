@@ -39,4 +39,7 @@ setup(
             "urartu=urartu.__init__:main",
         ]
     },
+    package_data={
+        "": ["**/*.yaml"],
+    },
 )
