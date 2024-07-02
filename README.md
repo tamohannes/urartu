@@ -1,48 +1,51 @@
 # UrarTU 🦁
 
-Harness the power of UrarTU, a versatile ML framework meticulously designed to provide intuitive abstractions of familiar pipeline components. With a .yaml file-based configuration system, and the added convenience of seamless Slurm job submission on clusters, UrarTU takes the complexity out of machine learning, so you can focus on what truly matters! 🚀
+Harness the power of UrarTU, a versatile ML framework meticulously designed to provide intuitive abstractions of familiar pipeline components. With a `.yaml` file-based configuration system, and the added convenience of seamless `slurm` job submission on clusters, `UrarTU` takes the complexity out of machine learning, so you can focus on what truly matters! 🚀
 
 ![urartu_schema drawio](https://github.com/tmynn/urartu/assets/23078323/1e2e4276-5136-47ab-b2e1-6b92f7a08adf)
 
 ## Installation
 
-Getting Started with UrarTU is a Breeze! 🌀 Simply follow these steps to set up the essential packages and create a local package named 'urartu':
+Getting Started with `UrarTU` is a Breeze! 🌀 Simply do
+```bash
+pip install urartu
+```
 
-- Clone the repository: `git clone git@github.com:tmynn/urartu.git`
+Or follow these steps to install from the source:
+
+- Clone the repository: `git clone git@github.com:tamohannes/urartu.git`
 - Navigate to the project directory: `cd urartu`
-- Execute the magic command: `pip install .`
+- Execute the magic command: `pip install -e .`
 
 
-Adding a Dash of Convenience! 🎉 Once you've executed the previous command, you'll not only have UrarTU ready to roll, but we've also sprinkled in a touch of magic for you ✨. An alias will be conjured, granting you easy access to UrarTU from any directory within your operating system:
+Adding a dash of convenience! ✨ Once you've executed the previous command, you'll also have an alias conjured, granting you easy access to `UrarTU` from any directory within your operating system:
 ```bash
 urartu --help
 ```
 
+## The Structure
+Think of `UrarTU` as a project insantiator. It simplifies project creation by offering high-level abstractions, `yaml`-based file configuration, and `slurm` job management. It also includes essential features for machine learning pipelines, such as dataset reading, model loading, device handling and more.
 
-> **Note for Usage on Slurm System**
-> For an enhanced experience with the Slurm job cancellation process, it is recommended to utilize a specific fork of the `submitit` package available at: [https://github.com/tmynn/submitit](https://github.com/tmynn/submitit). This fork includes the `ResumableSlurmJob.on_job_fail` callback, which allows the incorporation of additional functionality within this callback to ensure a graceful job termination.
+`Urartu` features a registry where you can manage your project (a Python module) and execute its actions using the `urartu` command.
+To register a project simply run:
 
-## Example Usage
-
-Running an action with UrarTU is as easy as waving a wand. Just provide the name of the configuration file containing the action, followed by the action name itself. 🪄 For instance, let's say you want to ignite the `example` action – an action that's a bit shy on functionality for now.
-
-Simply execute the following command in your terminal:
 ```bash
-urartu action_config=example
+urartu register --name=example --path=PATH_TO_EXAMPLE_MODULE
 ```
 
-## Exploring the Experiments
-Unveiling Insights with Ease! 🔍 UrarTU, pairs up with [Aim](https://github.com/aimhubio/aim), a remarkable open-source AI metadata tracker designed to be both intuitive and potent. To dive into the wealth of metrics that Aim effortlessly captures, simply follow these steps:
-- Navigate to the directory housing the .aim repository.
-- Execute the command that sparks the magic:
+Here, we register a module named `example` located at `PATH_TO_EXAMPLE_MODULE`.
+
+To remove a module from the registry, simply run:
 ```bash
-aim up
+urartu unregister --name=example
 ```
-Behold as your experiments come to life with clarity and depth! Aim brings your data to the forefront, and with it, the power to make informed decisions and chart new territories in the realm of machine learning. 📈
+
+To see the available modules, use the command `urartu -h`. Under the launch command, you’ll find a list of all registered modules.
+
 
 ## Navigating the UrarTU Architecture
 
-Within UrarTU lies a well-organized structure that simplifies your interaction with machine learning components.
+Within `UrarTU` lies a well-organized structure that simplifies your interaction with machine learning components.
 
 ### Configs: Tailoring Your Setup
 
@@ -55,7 +58,7 @@ The default configs which shape the way of configs are defined under `urartu/con
 
 Tailoring configurations to your needs is a breeze with UrarTU. You have two flexible options:
 
-1. **Custom Config Files**: To simplify configuration adjustments, UrarTU provides a dedicated `configs` directory where you can store personalized configuration files. These files seamlessly integrate with Hydra's search path. The directory structure mirrors that of `urartu/config`. You can define project-specific configurations in specially named files. For instance, an `example.yaml` file within the `configs` directory can house all the configurations specific to your 'example' project, with customized settings.
+1. **Custom Config Files**: To simplify configuration adjustments, UrarTU will read the content of your inherited module in `configs` directory where you can store personalized configuration files. These files seamlessly integrate with Hydra's search path. The directory structure mirrors that of `urartu/config`. You can define project-specific configurations in specially named files. For instance, an `example.yaml` file within the `configs` directory can house all the configurations specific to your 'example' project, with customized settings.
 
     - **Personalized User Configs**: To further tailor configurations for individual users, create a directory named `configs_{username}` at the same level as the `configs` directory, where `{username}` represents your operating system username. The beauty of this approach is that there are no additional steps required. Your customizations will smoothly load and override the default configurations, ensuring a seamless and hassle-free experience. ✨
 
@@ -74,7 +77,6 @@ Choose the method that suits your workflow best and enjoy the flexibility UrarTU
 
 Central to UrarTU's architecture is the `Action` class. This foundational script governs all actions and their behavior. From loading CLI arguments to orchestrating the `main` function of a chosen action, the `action_name` parameter plays the pivotal role in this functionality.
 
-
 ### Effortless Launch
 
 With UrarTU, launching actions becomes a breeze, offering you two distinctive pathways. 🚀
@@ -87,3 +89,32 @@ Experience the freedom to choose your launch adventure, tailored to your needs a
 
 And just like that, you're all set to embark on your machine learning journey with UrarTU! 🌟
 If you run into any hiccups along the way or have any suggestions, don't hesitate to open an issue for assistance.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Example Project
+
+For a sample project see [Getting Started Guide](./getting_started.md)
+
+
+## Exploring the Experiments
+Unveiling Insights with Ease! 🔍 UrarTU, pairs up with [Aim](https://github.com/aimhubio/aim), a remarkable open-source AI metadata tracker designed to be both intuitive and potent. To dive into the wealth of metrics that Aim effortlessly captures, simply follow these steps:
+- Navigate to the directory housing the .aim repository.
+- Execute the command that sparks the magic:
+```bash
+aim up
+```
+Behold as your experiments come to life with clarity and depth! Aim brings your data to the forefront, and with it, the power to make informed decisions and chart new territories in the realm of machine learning. 📈
