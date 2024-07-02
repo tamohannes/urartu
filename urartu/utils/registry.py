@@ -9,6 +9,20 @@ class Registry:
     REGISTRY_FILE_PATH = registry_file_path
 
     @staticmethod
+    def remove_entry(module_name):
+        file_content = Registry.load_file_content()
+
+        if module_name not in file_content:
+            raise ValueError(f"Module with name '{module_name}' does not exists in the registery")
+        else:
+            file_content.pop(module_name)
+
+            with open(Registry.REGISTRY_FILE_PATH, "w") as file:
+                yaml.dump(file_content, file)
+
+            return True
+
+    @staticmethod
     def add_entry(module_name, module_root_dir):
         file_content = Registry.load_file_content()
 
@@ -36,7 +50,7 @@ class Registry:
         else:
             with open(Registry.REGISTRY_FILE_PATH, "r") as file:
                 file_content = yaml.safe_load(file)
-        
+
         if file_content is None:
             return {}
             # raise RuntimeError(

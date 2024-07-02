@@ -5,6 +5,7 @@ from .command import Command
 
 from .launch import Launch
 from .register import Register
+from .unregister import Unregister
 
 
 def parse_args() -> Tuple[argparse.ArgumentParser, argparse.Namespace]:
