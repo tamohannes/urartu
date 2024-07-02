@@ -3,9 +3,9 @@ from typing import Tuple
 
 from .command import Command
 
-from .launch import Launch
 from .register import Register
 from .unregister import Unregister
+from .launch import Launch
 
 
 def parse_args() -> Tuple[argparse.ArgumentParser, argparse.Namespace]:

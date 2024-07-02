@@ -30,10 +30,11 @@ class Launch(Command):
 
     def add_subparser(self, parser: argparse._SubParsersAction) -> argparse.ArgumentParser:
         description = """urartu: launcher"""
+        available_modules = ", ".join(Registry.load_file_content().keys())
         subparser = parser.add_parser(
             self.name,
             description=description,
-            help="Launch an action from a given module",
+            help=f"Launch an action from a given module: {available_modules}",
         )
 
         subparser.add_argument("--name", type=str, help="name of the project/module")
