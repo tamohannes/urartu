@@ -11,7 +11,7 @@ class PipelineModel(Model):
     def __init__(self, cfg) -> None:
         super().__init__(cfg)
 
-    def _load_model(self) -> Tuple[AutoModelForCausalLM, AutoTokenizer]:
+    def _get_model(self) -> Tuple[AutoModelForCausalLM, AutoTokenizer]:
         model = AutoModelForCausalLM.from_pretrained(
             self.cfg.name,
             cache_dir=self.cfg.get("cache_dir"),

@@ -12,7 +12,7 @@ class OpenAIModel(Model):
     def __init__(self, cfg) -> None:
         super().__init__(cfg)
 
-    def _load_model(self) -> Tuple[AutoModelForCausalLM, AutoTokenizer]:
+    def _get_model(self) -> Tuple[AutoModelForCausalLM, AutoTokenizer]:
         self.model = AzureChatOpenAI(
             deployment_name=self.cfg.name,
             openai_api_type=self.cfg.openai_api_type,

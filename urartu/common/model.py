@@ -10,17 +10,14 @@ class Model:
         self.cfg = cfg
         self.model = None
         self.tokenizer = None
-        self._load_model()
+        self._get_model()
 
     @staticmethod
     def get_model(cfg):
         return hydra.utils.instantiate(cfg.type, cfg)
 
-    def _load_model(self):
-        raise NotImplementedError("method '_load_model' is not implemented")
-
-    # def __call__(self, args):
-    #     return self.model(**args)
+    def _get_model(self):
+        raise NotImplementedError("method '_get_model' is not implemented")
 
     def generate(self, prompt):
         raise NotImplementedError("method 'generate' is not implemented")
