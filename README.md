@@ -1,3 +1,11 @@
+<!--- BADGES: START --->
+
+[![PyPI - Package Version](https://img.shields.io/pypi/v/urartu?logo=pypi&style=flat&color=orange)](https://pypi.org/project/urartu/)
+[![PyPI - Python Version](https://img.shields.io/badge/Python-3.10-blue.svg?style=flat&logo=python&logoColor=white)](https://www.python.org/)
+[![GitHub - License](https://img.shields.io/github/license/tamohannes/urartu)](https://opensource.org/licenses/Apache-2.0)
+
+<!--- BADGES: END --->
+
 # UrarTU 🦁
 
 Harness the power of UrarTU, a versatile ML framework meticulously designed to provide intuitive abstractions of familiar pipeline components. With a `.yaml` file-based configuration system, and the added convenience of seamless `slurm` job submission on clusters, `UrarTU` takes the complexity out of machine learning, so you can focus on what truly matters! 🚀
