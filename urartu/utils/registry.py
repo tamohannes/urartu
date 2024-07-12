@@ -18,7 +18,8 @@ class Registry:
             file_content.pop(module_name)
 
             with open(Registry.REGISTRY_FILE_PATH, "w") as file:
-                yaml.dump(file_content, file)
+                if file_content:
+                    yaml.dump(file_content, file)
 
             return True
 
@@ -37,7 +38,7 @@ class Registry:
         else:
             file_content[module_name] = str(module_root_dir)
 
-            with open(Registry.REGISTRY_FILE_PATH, "a") as file:
+            with open(Registry.REGISTRY_FILE_PATH, "w") as file:
                 yaml.dump(file_content, file)
 
             return True
@@ -53,9 +54,6 @@ class Registry:
 
         if file_content is None:
             return {}
-            # raise RuntimeError(
-            #     f"Registery is empty, register a module using `urartu register --name='NAME' --path='PATH'` command."
-            # )
 
         return file_content
 
