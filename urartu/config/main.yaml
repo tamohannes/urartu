@@ -6,6 +6,7 @@ action_name: ???
 
 aim:
   repo: "aim://0.0.0.0:53800"
+  log_system_params: true
 
 slurm:
   # Whether or not to run the job on SLURM

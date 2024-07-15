@@ -55,6 +55,7 @@ class Launch(Command):
         aim_run = Run(
             repo=cfg.aim.repo,
             experiment=cfg.action_config.experiment_name,
+            log_system_params=cfg.aim.log_system_params,
         )
         aim_run.set("cfg", cfg, strict=False)
 
