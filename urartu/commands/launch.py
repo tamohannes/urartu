@@ -6,11 +6,11 @@ from aim import Run
 from hydra import compose, initialize
 from hydra.core.plugins import Plugins
 from omegaconf import OmegaConf
-from .command import Command
-from ..utils.launcher import launch, launch_on_slurm
-from ..utils.slurm import is_submitit_available
-from ..utils.registry import Registry
-from ..utils.hydra_plugin import UrartuPlugin
+from urartu.commands.command import Command
+from urartu.utils.launcher import launch, launch_on_slurm
+from urartu.utils.slurm import is_submitit_available
+from urartu.utils.registry import Registry
+from urartu.utils.hydra_plugin import UrartuPlugin
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 

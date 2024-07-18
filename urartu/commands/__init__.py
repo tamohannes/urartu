@@ -1,7 +1,7 @@
 import argparse
 from typing import Tuple
 
-from .command import Command
+from urartu.commands.command import Command
 
 from .register import Register
 from .unregister import Unregister

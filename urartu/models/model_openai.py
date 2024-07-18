@@ -5,10 +5,10 @@ from langchain.schema import HumanMessage
 from langchain_openai import AzureChatOpenAI
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from ..common.model import Model
+from urartu.common.model import Model
 
 
-class OpenAIModel(Model):
+class ModelOpenAI(Model):
     def __init__(self, cfg) -> None:
         super().__init__(cfg)
 

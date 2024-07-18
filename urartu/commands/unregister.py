@@ -2,8 +2,8 @@ import argparse
 import logging
 import re
 
-from .command import Command
-from ..utils.registry import Registry
+from urartu.commands.command import Command
+from urartu.utils.registry import Registry
 
 
 @Command.register("unregister")

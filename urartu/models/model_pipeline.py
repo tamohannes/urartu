@@ -3,11 +3,11 @@ from typing import Tuple
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
-from ..common.device import Device
-from ..common.model import Model
+from urartu.common.device import Device
+from urartu.common.model import Model
 
 
-class PipelineModel(Model):
+class ModelPipeline(Model):
     def __init__(self, cfg) -> None:
         super().__init__(cfg)
 

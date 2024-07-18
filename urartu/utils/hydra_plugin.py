@@ -14,14 +14,9 @@ class UrartuPlugin(SearchPathPlugin):
     def manipulate_search_path(self, search_path: ConfigSearchPath) -> None:
         if registry_paths:
             for registry_path in registry_paths:
-                paths = [
-                    (f"{registry_path}/configs", "file"),
-                    (f"{registry_path}/configs_{current_user}", "file"),
-                    (f"pkg://{registry_path}/configs", "pkg"),
-                    (f"file://{registry_path}/configs_{current_user}", "file")
-                ]
-                for path, type in paths:
-                    search_path.prepend(provider="urartu", path=path)
-                    logger.debug(f"Prepended {type} path: {path}")
+                search_path.append(provider="urartu", path=f"file://{registry_path}/configs_{current_user}")
+                search_path.append(provider="urartu", path=f"pkg://{registry_path}/configs_{current_user}")
+                search_path.append(provider="urartu", path=f"file://{registry_path}/configs")
+                search_path.append(provider="urartu", path=f"pkg://{registry_path}/configs")
         else:
             logger.warning("No registry paths found for UrartuPlugin.")
