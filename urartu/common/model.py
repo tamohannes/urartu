@@ -8,16 +8,15 @@ from .device import Device
 class Model:
     def __init__(self, cfg: List[Dict[str, Any]]):
         self.cfg = cfg
-        self.model = None
-        self.tokenizer = None
-        self._get_model()
+        self._model = None
 
     @staticmethod
     def get_model(cfg):
         return hydra.utils.instantiate(cfg.type, cfg)
 
-    def _get_model(self):
-        raise NotImplementedError("method '_get_model' is not implemented")
+    @property
+    def model(self):
+        raise NotImplementedError("property 'model' instantiation is not implemented")
 
     def generate(self, prompt):
         raise NotImplementedError("method 'generate' is not implemented")

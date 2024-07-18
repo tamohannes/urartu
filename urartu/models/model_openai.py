@@ -12,14 +12,17 @@ class ModelOpenAI(Model):
     def __init__(self, cfg) -> None:
         super().__init__(cfg)
 
-    def _get_model(self) -> Tuple[AutoModelForCausalLM, AutoTokenizer]:
-        self.model = AzureChatOpenAI(
-            deployment_name=self.cfg.name,
-            openai_api_type=self.cfg.openai_api_type,
-            openai_api_version=self.cfg.openai_api_version,
-            azure_endpoint=self.cfg.azure_openai_endpoint,
-            openai_api_key=self.cfg.azure_openai_api_key,
-        )
+    @property
+    def model(self) -> AutoModelForCausalLM:
+        if self._model is None:
+            self._model = AzureChatOpenAI(
+                deployment_name=self.cfg.name,
+                openai_api_type=self.cfg.openai_api_type,
+                openai_api_version=self.cfg.openai_api_version,
+                azure_endpoint=self.cfg.azure_openai_endpoint,
+                openai_api_key=self.cfg.azure_openai_api_key,
+            )
+        return self._model
 
     def generate(self, prompt: Union[str, Tuple[str, str]], generate_cfg):
         output = self.model(HumanMessage(content=prompt))
