@@ -14,6 +14,6 @@ class DatasetFromHub(Dataset):
             raise TypeError("Argument 'name' is missing")
         self.dataset = load_dataset(
             self.cfg.name,
-            subset=self.cfg.get("subset"),
+            self.cfg.get("subset"),
             split=self.cfg.get("split"),
         )
