@@ -31,6 +31,7 @@ class ModelCausalLanguage(Model):
     def tokenizer(self):
         if self._tokenizer is None:
             self._tokenizer = AutoTokenizer.from_pretrained(self.cfg.name)
+            self._tokenizer.pad_token = self._tokenizer.eos_token
         return self._tokenizer
 
     def generate(self, prompt: str, generate_cfg=None):
