@@ -12,10 +12,11 @@ class ResumableSlurmJob:
         self.cfg = cfg
 
         self.aim_run = None
-        self.aim_run_hash = aim_run.hash
+        if self.cfg.aim.use_aim:
+            self.aim_run_hash = aim_run.hash
 
     def get_aim_run(self):
-        if self.aim_run is None:
+        if self.cfg.aim.use_aim and self.aim_run is None:
             self.aim_run = Run(self.aim_run_hash, repo=self.cfg.aim.repo)
         return self.aim_run
 
@@ -28,10 +29,11 @@ class ResumableSlurmJob:
         self.cfg.slurm.init_method = "tcp"
         self.cfg.slurm.run_id = f"{master_ip}:{master_port}"
 
-        self.get_aim_run()
-        self.aim_run.set(
-            "job", {"job_id": int(environment.job_id), "hostname": environment.hostname}
-        )
+        if self.cfg.aim.use_aim:
+            self.get_aim_run()
+            self.aim_run.set(
+                "job", {"job_id": int(environment.job_id), "hostname": environment.hostname}
+            )
 
         sys.path.append(f"{self.module}/actions")
         action = import_module(self.action_name)

@@ -24,6 +24,7 @@ example
 │       └── generate.yaml
 └── configs_tamoyan
     ├── __init__.py
+    ├── aim.yaml
     └── slurm.yaml
 ```
 
@@ -85,8 +86,8 @@ This is a general configuration file for the next token prediction project. Howe
 ```yaml
 # @package _global_
 
-aim:
-  repo: "aim://0.0.0.0:53800"
+repo: aim://0.0.0.0:43800
+log_system_params: true
 ```
 
 ## Enabling slurm

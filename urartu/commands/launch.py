@@ -52,12 +52,14 @@ class Launch(Command):
             cfg = compose(config_name="main", overrides=args.module_args)
         cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True, enum_to_str=True))
 
-        aim_run = Run(
-            repo=cfg.aim.repo,
-            experiment=cfg.action_config.experiment_name,
-            log_system_params=cfg.aim.log_system_params,
-        )
-        aim_run.set("cfg", cfg, strict=False)
+        aim_run = None
+        if cfg.aim.use_aim:
+            aim_run = Run(
+                repo=cfg.aim.repo,
+                experiment=cfg.action_config.experiment_name,
+                log_system_params=cfg.aim.log_system_params,
+            )
+            aim_run.set("cfg", cfg, strict=False)
 
         if cfg.slurm.use_slurm:
             assert is_submitit_available(), "Please 'pip install submitit' to schedule jobs on SLURM"
@@ -76,5 +78,5 @@ class Launch(Command):
                 aim_run=aim_run,
             )
 
-        if aim_run.active:
+        if cfg.aim.use_aim and aim_run.active:
             aim_run.close()
