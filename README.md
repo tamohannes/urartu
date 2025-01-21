@@ -6,6 +6,9 @@
 
 <!--- BADGES: END --->
 
+🚀 New Release Available!
+We've just rolled out a new version of this project! 🎉 While the README.md is still catching up with all the exciting changes, feel free to explore the release notes and dive in. Your feedback is always welcome! ❤️
+
 # UrarTU 🦁
 
 Harness the power of UrarTU, a versatile ML framework meticulously designed to provide intuitive abstractions of familiar pipeline components. With a `.yaml` file-based configuration system, and the added convenience of seamless `slurm` job submission on clusters, `UrarTU` takes the complexity out of machine learning, so you can focus on what truly matters! 🚀
@@ -19,7 +22,9 @@ Getting Started with `UrarTU` is a Breeze! 🌀 Simply do
 pip install urartu
 ```
 
-Or follow these steps to install from the source:
+
+
+<!-- Or follow these steps to install from the source:
 
 - Clone the repository: `git clone git@github.com:tamohannes/urartu.git`
 - Navigate to the project directory: `cd urartu`
@@ -75,7 +80,7 @@ Tailoring configurations to your needs is a breeze with UrarTU. You have two fle
 2. **CLI Approach**: For those who prefer a command-line interface (CLI) approach, UrarTU offers a convenient method. You can enhance your commands with specific key-value pairs directly in the CLI. For example, modifying your working directory path is as simple as:
 
     ```bash
-    urartu action_config=example action_config.workdir=PATH_TO_WORKDIR
+    urartu action_config=example action_config.experiment_name=NAME_OF_EXPERIMENT
     ```
 
 Choose the method that suits your workflow best and enjoy the flexibility UrarTU provides for crafting custom configurations.
@@ -125,4 +130,4 @@ Unveiling Insights with Ease! 🔍 UrarTU, pairs up with [Aim](https://github.co
 ```bash
 aim up
 ```
-Behold as your experiments come to life with clarity and depth! Aim brings your data to the forefront, and with it, the power to make informed decisions and chart new territories in the realm of machine learning. 📈
+Behold as your experiments come to life with clarity and depth! Aim brings your data to the forefront, and with it, the power to make informed decisions and chart new territories in the realm of machine learning. 📈 -->

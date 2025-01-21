@@ -185,6 +185,7 @@ ipython_config.py
 .logs
 .aim
 outputs
+runs
 models--*
 .DS_Store
 Icon*

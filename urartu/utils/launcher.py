@@ -5,18 +5,23 @@ from typing import Dict
 from aim import Run
 from iopath.common.file_io import g_pathmgr
 
-from .io import makedir
+
 from .job import ResumableJob, ResumableSlurmJob
+import logging
+from iopath.common.file_io import g_pathmgr
 
 
 def create_submitit_executor(cfg: Dict):
     import submitit
 
     log_folder = Path(cfg.slurm.log_folder).joinpath(str(time.time()))
-    makedir(log_folder)
-    assert g_pathmgr.exists(
-        log_folder
-    ), f"Specified cfg.slurm.log_folder={log_folder} doesn't exist"
+    try:
+        if not g_pathmgr.exists(log_folder):
+            g_pathmgr.mkdirs(log_folder)
+    except BaseException:
+        logging.error(f"Error creating directory: {log_folder}")
+
+    assert g_pathmgr.exists(log_folder), f"Specified cfg.slurm.log_folder={log_folder} doesn't exist"
     assert cfg.slurm.partition, "slurm.PARTITION must be set when using slurm"
 
     executor = submitit.AutoExecutor(folder=log_folder)
@@ -41,9 +46,7 @@ def create_submitit_executor(cfg: Dict):
 
 def launch_on_slurm(module: str, action_name: str, cfg: Dict, aim_run: Run):
     executor = create_submitit_executor(cfg)
-    trainer = ResumableSlurmJob(
-        module=module, action_name=action_name, cfg=cfg, aim_run=aim_run
-    )
+    trainer = ResumableSlurmJob(module=module, action_name=action_name, cfg=cfg, aim_run=aim_run)
 
     job = executor.submit(trainer)
     print(f"SUBMITTED: {job.job_id}")
@@ -52,7 +55,5 @@ def launch_on_slurm(module: str, action_name: str, cfg: Dict, aim_run: Run):
 
 
 def launch(module: str, action_name: str, cfg: Dict, aim_run: Run):
-    trainer = ResumableJob(
-        module=module, action_name=action_name, cfg=cfg, aim_run=aim_run
-    )
+    trainer = ResumableJob(module=module, action_name=action_name, cfg=cfg, aim_run=aim_run)
     trainer()

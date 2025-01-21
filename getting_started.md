@@ -46,7 +46,6 @@ aim:
   repo: ./
 
 action_config:
-  workdir: ./
   experiment_name: "Example - next token prediction"
   device: "cpu" # auto, cuda, cpu (default) 
 

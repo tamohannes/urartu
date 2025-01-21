@@ -31,9 +31,7 @@ class ResumableSlurmJob:
 
         if self.cfg.aim.use_aim:
             self.get_aim_run()
-            self.aim_run.set(
-                "job", {"job_id": int(environment.job_id), "hostname": environment.hostname}
-            )
+            self.aim_run.set("job", {"job_id": int(environment.job_id), "hostname": environment.hostname})
 
         sys.path.append(f"{self.module}/actions")
         action = import_module(self.action_name)

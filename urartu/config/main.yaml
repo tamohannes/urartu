@@ -4,4 +4,8 @@ defaults:
   - slurm: default_slurm
   - aim: default_aim
 
+hydra:
+  sweep:
+    dir: '.runs/${now:%Y-%m-%d}_${now:%H-%M-%S}_multirun'
+
 action_name: ???
