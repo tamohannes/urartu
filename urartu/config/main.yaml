@@ -6,6 +6,6 @@ defaults:
 
 hydra:
   sweep:
-    dir: '.runs/${now:%Y-%m-%d}_${now:%H-%M-%S}_multirun'
+    dir: '.runs/${action_name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_multirun'
 
 action_name: ???

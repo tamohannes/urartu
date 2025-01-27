@@ -59,7 +59,7 @@ def main(cfg: DictConfig) -> None:
     if is_multirun:
         run_dir = Path(hydra_cfg.runtime.output_dir, hydra_cfg.job.id).parent
     else:
-        run_dir = cwd.joinpath(".runs", datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+        run_dir = cwd.joinpath(".runs", cfg.action_name, datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
         os.makedirs(run_dir, exist_ok=True)
 
     run_hash = secrets.token_hex(8)
