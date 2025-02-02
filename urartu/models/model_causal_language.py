@@ -20,6 +20,7 @@ class ModelCausalLanguage(Model):
                 device_map=Device.get_device(),
                 torch_dtype=eval_dtype(self.cfg.dtype),
                 token=self.cfg.api_token,
+                trust_remote_code=self.cfg.get("trust_remote_code")
             )
 
             for param in self._model.parameters():
