@@ -1,4 +1,3 @@
-import time
 from pathlib import Path
 from typing import Dict
 
@@ -14,7 +13,7 @@ from iopath.common.file_io import g_pathmgr
 def create_submitit_executor(cfg: Dict):
     import submitit
 
-    log_folder = Path(cfg.slurm.log_folder).joinpath(str(time.time()))
+    log_folder = Path(cfg.run_dir)
     try:
         if not g_pathmgr.exists(log_folder):
             g_pathmgr.mkdirs(log_folder)
@@ -49,7 +48,7 @@ def launch_on_slurm(module: str, action_name: str, cfg: Dict, aim_run: Run):
     trainer = ResumableSlurmJob(module=module, action_name=action_name, cfg=cfg, aim_run=aim_run)
 
     job = executor.submit(trainer)
-    print(f"SUBMITTED: {job.job_id}")
+    logging.info(f"Submitted job {job.job_id}")
 
     return job
 

@@ -59,14 +59,14 @@ def main(cfg: DictConfig) -> None:
     if is_multirun:
         run_dir = Path(hydra_cfg.runtime.output_dir, hydra_cfg.job.id).parent
     else:
-        run_dir = cwd.joinpath(
-            ".runs", cfg.action_name, "debug" if cfg.debug else "", datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        )
+        run_dir = Path(cfg.run_dir)
+        if cfg.debug:
+            parts = list(Path(run_dir).parts)
+            parts.insert(-1, "debug")
+            run_dir = Path(*parts)
         os.makedirs(run_dir, exist_ok=True)
 
-    run_hash = secrets.token_hex(8)
-
-    log_file = run_dir / "output.log"
+    log_file = run_dir.joinpath("output.log")
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
@@ -77,13 +77,13 @@ def main(cfg: DictConfig) -> None:
     sys.stdout = open(log_file, 'a')
     sys.stderr = sys.stdout
 
-    cfg.action_config.run_dir = str(run_dir)
-    cfg.action_config.run_hash = run_hash
-
-    with open(run_dir / "notes.md", "w") as f:
+    with open(run_dir.joinpath("notes.md"), "w") as f:
         pass
 
-    with open(run_dir / "cfg.yaml", "w") as f:
+    cfg.run_dir = str(run_dir)
+    run_hash = secrets.token_hex(8)
+    cfg.action_config.run_hash = run_hash
+    with open(run_dir.joinpath("cfg.yaml"), "w") as f:
         OmegaConf.save(config=cfg, f=f)
 
     aim_run = None
