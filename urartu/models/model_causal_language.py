@@ -20,7 +20,7 @@ class ModelCausalLanguage(Model):
                 device_map=Device.get_device(),
                 torch_dtype=eval_dtype(self.cfg.dtype),
                 token=self.cfg.api_token,
-                trust_remote_code=self.cfg.get("trust_remote_code")
+                trust_remote_code=self.cfg.get("trust_remote_code"),
             )
 
             for param in self._model.parameters():
@@ -47,6 +47,8 @@ class ModelCausalLanguage(Model):
             output_tokenized = self.model.generate(
                 input_ids=prompt_tensor, attention_mask=attention_mask, **generate_cfg
             )
-        output = self.tokenizer.decode(output_tokenized[0], skip_special_tokens=True)
-
-        return output
+        if "output_scores" in generate_cfg:
+            output = self.tokenizer.decode(output_tokenized["sequences"][0], skip_special_tokens=True)
+            return output, output_tokenized['scores']
+        else:
+            return self.tokenizer.decode(output_tokenized[0], skip_special_tokens=True)
