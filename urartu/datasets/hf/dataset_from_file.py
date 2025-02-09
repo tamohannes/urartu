@@ -13,11 +13,20 @@ class DatasetFromFile(Dataset):
     def _get_dataset(self):
         if "data_files" not in self.cfg:
             raise TypeError("Argument 'data_files' is missing")
-        file_extension = Path(self.cfg.data_files).suffix
-        if file_extension.startswith(".json"):
+        data_files_path = Path(self.cfg.data_files)
+        if not data_files_path.is_dir():
+            raise TypeError("Path: '{self.cfg.data_files_path}' is not a valid directory")
+
+        if self.cfg.file_extensions.startswith("json"):
             file_format = "json"
-        elif file_extension == ".txt":
-            file_format = "text"
+        elif self.cfg.file_extensions.startswith("txt"):
+            file_format = "txt"
         else:
-            raise KeyError(f"Failed to load data file '{file_extension}'")
-        self.dataset = load_dataset(file_format, data_files=self.cfg.data_files)["train"]
+            raise KeyError(f"Files in '{self.cfg.file_extensions}' format are not supported")
+
+        data_files = [
+            str(file)
+            for file in data_files_path.rglob("*.jsonl")
+            if not file.name.startswith(".") or file.name.startswith("_")
+        ]
+        self.dataset = load_dataset(file_format, data_files=data_files)["train"]
