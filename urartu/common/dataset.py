@@ -24,8 +24,8 @@ class Dataset:
             tokenized = tokenizer(
                 examples[dataloader_cfg["input_key"]],
                 truncation=True,
-                padding=False,
-                max_length=tokenizer.model_max_length,
+                padding="max_length",
+                max_length=dataloader_cfg.get("max_length", tokenizer.model_max_length),
                 return_tensors=None,
             )
             return {**examples, **tokenized}
