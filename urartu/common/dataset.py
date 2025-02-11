@@ -20,30 +20,23 @@ class Dataset:
         raise NotImplementedError("method '_get_dataset' is not implemented")
 
     def get_dataloader(self, dataloader_cfg: Dict[str, Any], tokenizer):
-        def tokenize_function(examples):
-            tokenized = tokenizer(
-                examples[dataloader_cfg["input_key"]],
-                truncation=True,
-                padding="max_length",
-                max_length=dataloader_cfg.get("max_length", tokenizer.model_max_length),
-                return_tensors=None,
-            )
-            return {**examples, **tokenized}
-
         def collate_fn(examples):
-            tokenizer_inputs = {k: [example[k] for example in examples] for k in ["input_ids", "attention_mask"]}
-            padded = DataCollatorWithPadding(tokenizer=tokenizer, padding=True, return_tensors="pt")(tokenizer_inputs)
+            tokenized = tokenizer(
+                [example[dataloader_cfg["input_key"]] for example in examples],
+                truncation=True,
+                padding=True,  # Pad to the maximum length in the batch
+                max_length=dataloader_cfg.get("max_length", tokenizer.model_max_length),
+                return_tensors="pt",
+            )
 
             for k in examples[0].keys():
-                if k not in padded:
-                    padded[k] = [example[k] for example in examples]
+                if k not in tokenized:
+                    tokenized[k] = [example[k] for example in examples]
 
-            return padded
-
-        tokenized_datasets = self.dataset.map(tokenize_function, batched=True)
+            return tokenized
 
         return DataLoader(
-            tokenized_datasets,
+            self.dataset,
             shuffle=dataloader_cfg.get("shuffle", False),
             batch_size=dataloader_cfg.get("batch_size", 8),
             num_workers=dataloader_cfg.get("num_workers", 4),
