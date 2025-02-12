@@ -1,0 +1,27 @@
+# @package _global_
+action_name: generate
+debug: false
+
+action_config:
+  experiment_name: "Example - next token prediction"
+  device: "gpu" # auto, cuda, cpu (default) 
+
+  task:
+    model:
+      type:
+        _target_: urartu.models.model_causal_language.ModelCausalLanguage
+      name: gpt2
+      dtype: torch.float32
+      cache_dir: ""
+      generate:
+        max_length: 100
+        num_beams: 5
+        no_repeat_ngram_size: 2
+
+    dataset:
+      type:
+        _target_: urartu.datasets.hf.dataset_from_hub.DatasetFromHub
+      name: truthfulqa/truthful_qa
+      subset: generation
+      split: validation
+      input_key: "question"

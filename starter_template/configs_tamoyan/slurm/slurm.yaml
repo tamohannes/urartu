@@ -1,0 +1,17 @@
+use_slurm: true
+name: "generate"
+comment: "generate job"
+account: "ACCOUNT"
+partition: "PARTITION"
+time_hours: 24
+time_minutes: 0
+constraint: ""
+mem_gb: 150
+port_id: 40050
+num_cpu_per_proc: 1
+num_gpu_per_node: 1
+num_nodes: 1
+num_proc_per_node: 1
+additional_parameters: {
+  "nodelist": "NODENAME"
+}

@@ -7,127 +7,170 @@
 <!--- BADGES: END --->
 
 🚀 New Release Available!
-We've just rolled out a new version of this project! 🎉 While the README.md is still catching up with all the exciting changes, feel free to explore the release notes and dive in. Your feedback is always welcome! ❤️
+We're excited to announce a new version of our project! 🎉 Our README.md is currently being updated to reflect all the fantastic changes. In the meantime, please explore the release notes and dive in. We'd love to hear your feedback! ❤️
 
-# UrarTU 🦁
+# **UrarTU 🦁**
 
-Harness the power of UrarTU, a versatile ML framework meticulously designed to provide intuitive abstractions of familiar pipeline components. With a `.yaml` file-based configuration system, and the added convenience of seamless `slurm` job submission on clusters, `UrarTU` takes the complexity out of machine learning, so you can focus on what truly matters! 🚀
+Welcome to UrarTU, your go-to NLP framework designed to simplify your work. UrarTU provides easy-to-use abstractions for common pipeline components, making your machine learning journey smoother.
+With a `.yaml` file-based configuration system and seamless `slurm` job submission capabilities on clusters, UrarTU removes the technical hassle so you can focus on making impactful NLP work! 🚀
 
 ![urartu_schema drawio](https://github.com/tamohannes/urartu/assets/23078323/9d747c2d-9856-4dbe-85ab-74a595f86603)
 
-## Installation
+# **Installation**
 
-Getting Started with `UrarTU` is a Breeze! 🌀 Simply do
+Getting started with UrarTU is super easy! 🌀 Just run:
 ```bash
 pip install urartu
 ```
 
+Or, if you prefer to install directly from the source:
+
+- Clone the repository:
+    ```bash
+    git clone git@github.com:tamohannes/urartu.git`
+    ```
+- Navigate to the project directory:
+    ```bash
+    cd urartu
+    ```
+- Execute the magic command:
+    ```bash
+    pip install -e .
+    ```
 
 
-<!-- Or follow these steps to install from the source:
+And just like that, you're all set! ✨ Use the following command anywhere in your system to access UrarTU:
 
-- Clone the repository: `git clone git@github.com:tamohannes/urartu.git`
-- Navigate to the project directory: `cd urartu`
-- Execute the magic command: `pip install -e .`
-
-
-Adding a dash of convenience! ✨ Once you've executed the previous command, you'll also have an alias conjured, granting you easy access to `UrarTU` from any directory within your operating system:
 ```bash
 urartu --help
 ```
 
-## The Structure
-Think of `UrarTU` as a project insantiator. It simplifies project creation by offering high-level abstractions, `yaml`-based file configuration, and `slurm` job management. It also includes essential features for machine learning pipelines, such as dataset reading, model loading, device handling and more.
+# **Getting started**
 
-`Urartu` features a registry where you can manage your project (a Python module) and execute its actions using the `urartu` command.
-To register a project simply run:
+To jump right in with UrarTU, start with our `starter_template`. You can copy this to begin your project or check out the steps in our [Starter Template Setup](./starter_template_setup.md). Your setup will mirror what's found in this directory.
 
+
+Think of UrarTU as the foundational framework for your projects, similar to an abstract class in object-oriented programming (OOP).
+Your project acts as the concrete implementation, where UrarTU provides the foundational scaffolding.
+It includes high-level abstractions, configuration through `.yaml` files powered by [Hydra](https://github.com/facebookresearch/hydra), and `slurm` job management utilizing the [Submitit](https://github.com/facebookincubator/submitit) library.
+This setup ensures your projects are both flexible and robust, making your machine learning workflow efficient and scalable.
+It also includes key NLP features such as dataset readers, model loaders, and device handlers.
+
+
+Here's how to get started:
+1. Extend UrarTU: Inherit the structure of UrarTU and customize it by writing your own actions and configurations, akin to implementing methods from an abstract class in OOP.
+2.	Utilize Core Functionalities: Jumpstart your project with pre-defined functionalities:
+    - Datasets:
+	    - Load a HF (Hugging Face) dataset from a dictionary, a file, or directly from the HF hub.
+	- Models:
+	    - Use a HF model as a causal language model or integrate it into a pipeline.
+	    - Incorporate the OpenAI API for advanced modeling.
+3.	Customize Further: Develop and place your own classes within the corresponding directories of your project to meet your specific needs.
+
+By following these steps, you can efficiently set up and customize your machine learning projects with UrarTU.
+
+
+# **Firing Up 🔥**
+
+Once you've cloned the `starter_template`, head over to that directory in your terminal:
 ```bash
-urartu register --name=example --path=PATH_TO_EXAMPLE_MODULE
+cd starter_template
 ```
 
-Here, we register a module named `example` located at `PATH_TO_EXAMPLE_MODULE`.
-
-To remove a module from the registry, simply run:
+To launch a single run with predefined configurations, execute the following command:
 ```bash
-urartu unregister --name=example
+urartu action_config=generate aim=aim slurm=slurm
 ```
 
-To see the available modules, use the command `urartu -h`. Under the launch command, you’ll find a list of all registered modules.
+If you're looking to perform multiple runs, simply use the `--multirun` flag. To configure multiple runs, add a sweeper at the end of your `generate.yaml` config file like this:
+
+```yaml
+...
+
+hydra:
+  sweeper:
+    params:
+      action_config.task.model.generate.num_beams: 1,5,10
+```
+This setup initiates 3 separate runs, each utilizing different `num_beams` settings to adjust the model's behavior.
+
+Then, start your multi-run session with the same command:
+
+```bash
+urartu action_config=generate aim=aim slurm=slurm
+```
+
+With these steps, you can effortlessly kickstart your machine learning experiments with UrarTU, whether for a single test or comprehensive multi-run analyses!
 
 
-## Navigating the UrarTU Architecture
+# **Navigating the UrarTU Architecture**
 
-Within `UrarTU` lies a well-organized structure that simplifies your interaction with machine learning components.
+Dive into the structured world of UrarTU, where managing NLP components becomes straightforward and intuitive.
 
-### Configs: Tailoring Your Setup
+## **Configs: Tailoring Your Setup**
 
-The default configs which shape the way of configs are defined under `urartu/config` directory:
-- `urartu/config/main.yaml`: This core configuration file sets the foundation for default settings, covering all available keys within the system.
-- `urartu/config/action_config` Directory: A designated space for specific action configurations.
+Set up your environment effortlessly with our configuration templates found in the `urartu/config` directory:
+- `urartu/config/main.yaml`: This primary configuration file lays the groundwork with default settings for all system keys.
+- `urartu/config/action_config` This space is dedicated to configurations specific to various actions.
 
 
-### Crafting Customizations
+## **Crafting Customizations**
 
-Tailoring configurations to your needs is a breeze with UrarTU. You have two flexible options:
+Configuring UrarTU to meet your specific needs is straightforward. You have two easy options:
 
-1. **Custom Config Files**: To simplify configuration adjustments, UrarTU will read the content of your inherited module in `configs` directory where you can store personalized configuration files. These files seamlessly integrate with Hydra's search path. The directory structure mirrors that of `urartu/config`. You can define project-specific configurations in specially named files. For instance, an `example.yaml` file within the `configs` directory can house all the configurations specific to your 'example' project, with customized settings.
+1. **Custom Config Files**: Store your custom configuration files in the configs directory to adjust the settings. This directory aligns with `urartu/config`, allowing you to maintain project-specific settings in files like `generate.yaml` for your `starter_template` project.
 
-    - **Personalized User Configs**: To further tailor configurations for individual users, create a directory named `configs_{username}` at the same level as the `configs` directory, where `{username}` represents your operating system username. The beauty of this approach is that there are no additional steps required. Your customizations will smoothly load and override the default configurations, ensuring a seamless and hassle-free experience. ✨
+    - **Personalized User Configs**: For an even more tailored experience, create a `configs_{username}` directory at the same level as configs, replacing `{username}` with your system username. This setup automatically loads and overrides default settings without extra steps. ✨
 
-    The order of precedence for configuration overrides is as follows: `urartu/config`, `configs`, `configs_{username}`, giving priority to user-specific configurations.
+Configuration files are prioritized in the following order: `urartu/config`, `starter_template/configs`, `starter_template/configs_{username}`, ensuring your custom settings take precedence.
 
-2. **CLI Approach**: For those who prefer a command-line interface (CLI) approach, UrarTU offers a convenient method. You can enhance your commands with specific key-value pairs directly in the CLI. For example, modifying your working directory path is as simple as:
+2. **CLI Approach**: If you prefer using the command-line interface (CLI), UrarTU supports enhancing commands with key-value pairs directly in the CLI, such as:
 
     ```bash
     urartu action_config=example action_config.experiment_name=NAME_OF_EXPERIMENT
     ```
 
-Choose the method that suits your workflow best and enjoy the flexibility UrarTU provides for crafting custom configurations.
+Select the approach that best fits your workflow and enjoy the customizability that UrarTU offers.
 
 
-### Actions: Shaping Functionality
+## **Actions: Shaping Functionality**
 
-Central to UrarTU's architecture is the `Action` class. This foundational script governs all actions and their behavior. From loading CLI arguments to orchestrating the `main` function of a chosen action, the `action_name` parameter plays the pivotal role in this functionality.
+At the heart of UrarTU is the `Action` class, which orchestrates all operations. This script manages everything from CLI arguments to the execution of the main function based on the `action_name` parameter.
 
-### Effortless Launch
+## **Logging: Capture Every Detail**
 
-With UrarTU, launching actions becomes a breeze, offering you two distinctive pathways. 🚀
+UrarTU is equipped with a comprehensive logging system to ensure no detail of your project’s execution is missed. Here’s how it works:
+- Standard Runs: Every execution is meticulously logged and stored in a structured directory within your current working directory. The path format is:
+`.runs/${action_name}/${now:%Y-%m-%d}_${now:%H-%M-%S}`
+- Debug Mode: If the debug flag is enabled, logs are saved under: `.runs/debug/${action_name}/${now:%Y-%m-%d}_${now:%H-%M-%S}`
+- Multi-run Sessions: For runs involving multiple configurations or tests, logs are appended with a `.runs/debug/${action_name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_multirun` suffix to differentiate them.
 
-- Local Marvel: The first route lets you run jobs on your local machine – the very platform where the script takes flight.
-- Cluster Voyage: The second option invites you to embark on a journey to the slurm cluster. By setting the `slurm.use_slurm` configuration in `config/main.yaml` which takes boolean values, you can toggle between these options effortlessly.
+Each run directory is organized to contain essential files such as:
+- output.log: Captures all output from the run.
+- notes.md: Allows for manual annotations and observations.
+- cfg.yaml: Stores the configuration used for the run.
 
-Experience the freedom to choose your launch adventure, tailored to your needs and aspirations!
-
-
-And just like that, you're all set to embark on your machine learning journey with UrarTU! 🌟
-If you run into any hiccups along the way or have any suggestions, don't hesitate to open an issue for assistance.
-
-
-
-
+Additional files may be included depending on the type of run, ensuring you have all the data you need at your fingertips.
 
 
+## **Effortless Launch**
+
+Launching with UrarTU is a breeze, offering you two launch options:
+
+- Local Marvel: Execute jobs right on your local machine.
+- Cluster Voyage: Set sail to the slurm cluster by toggling the `slurm.use_slurm` in `config_{username}/slurm/slurm.yaml` to switch between local and cluster executions.
+
+Choose your adventure and launch your projects with ease! 🚀
 
 
+Encountered any issues or have suggestions? Feel free to open an issue for support.
 
 
-
-
-
-
-
-
-## Example Project
-
-For a sample project see [Getting Started Guide](./getting_started.md)
-
-
-## Exploring the Experiments
-Unveiling Insights with Ease! 🔍 UrarTU, pairs up with [Aim](https://github.com/aimhubio/aim), a remarkable open-source AI metadata tracker designed to be both intuitive and potent. To dive into the wealth of metrics that Aim effortlessly captures, simply follow these steps:
-- Navigate to the directory housing the .aim repository.
-- Execute the command that sparks the magic:
+# **Exploring the Experiments**
+Unveil insights with ease using UrarTU in partnership with [Aim](https://github.com/aimhubio/aim), the intuitive and powerful open-source AI metadata tracker. To access a rich trove of metrics captured by Aim, simply:
+- Navigate to the directory containing the .aim repository.
+- Fire up the magic with:
 ```bash
 aim up
 ```
-Behold as your experiments come to life with clarity and depth! Aim brings your data to the forefront, and with it, the power to make informed decisions and chart new territories in the realm of machine learning. 📈 -->
+Watch as Aim brings your experiments into sharp relief, providing the clarity needed to drive informed decisions and pioneering efforts in machine learning. 📈

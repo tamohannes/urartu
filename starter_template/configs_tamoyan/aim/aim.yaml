@@ -1,0 +1,4 @@
+# @package _global_
+use_aim: true
+repo: aim://0.0.0.0:43800
+log_system_params: true
