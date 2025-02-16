@@ -24,21 +24,24 @@ def create_submitit_executor(cfg: Dict):
     assert cfg.slurm.partition, "slurm.PARTITION must be set when using slurm"
 
     executor = submitit.AutoExecutor(folder=log_folder)
-    timeout_min = cfg.slurm.time_hours * 60 + cfg.slurm.time_minutes
+    
+    # Update parameters to align with _make_sbatch_string
     executor.update_parameters(
         name=cfg.slurm.name,
-        slurm_comment=cfg.slurm.comment,
-        slurm_partition=cfg.slurm.partition,
-        slurm_account=cfg.slurm.account,
-        slurm_constraint=cfg.slurm.constraint,
-        timeout_min=timeout_min,
-        nodes=cfg.slurm.num_nodes,
-        cpus_per_task=cfg.slurm.num_cpu_per_proc * cfg.slurm.num_proc_per_node,
-        tasks_per_node=cfg.slurm.num_proc_per_node,
-        gpus_per_node=cfg.slurm.num_gpu_per_node,
-        slurm_mem=f"{cfg.slurm.mem_gb}G",
-        mem_gb=cfg.slurm.mem_gb,
-        slurm_additional_parameters=cfg.slurm.additional_parameters,
+        comment=cfg.slurm.comment,  # Align with _make_sbatch_string
+        account=cfg.slurm.account,
+        partition=cfg.slurm.partition,
+        timeout_min=cfg.slurm.timeout_min,
+        constraint=cfg.slurm.constraint,
+        # cpus_per_task=cfg.slurm.num_cpu_per_proc * cfg.slurm.num_proc_per_node,
+        mem=f"{cfg.slurm.mem}G",  # Align with _make_sbatch_string
+        nodelist=cfg.slurm.nodelist,
+        nodes=cfg.slurm.nodes,
+        tasks_per_node=cfg.slurm.tasks_per_node,
+        gpus_per_node=cfg.slurm.gpus_per_node,
+        cpus_per_task=cfg.slurm.cpus_per_task,
+        additional_parameters=cfg.slurm.additional_parameters,
+        # Add any other relevant parameters from _make_sbatch_string
     )
     return executor
 

@@ -4,7 +4,6 @@ import hydra
 from torch.utils.data import DataLoader
 import logging
 
-from transformers import DataCollatorWithPadding
 
 # Configure logging
 logging.basicConfig(level=logging.WARNING)
@@ -23,7 +22,7 @@ class Dataset:
     def _get_dataset(self):
         raise NotImplementedError("method '_get_dataset' is not implemented")
 
-    def get_dataloader(self, dataloader_cfg: Dict[str, Any], tokenizer):
+    def get_dataloader(self, dataloader_cfg: Dict[str, Any], tokenizer, return_attrs=False):
         def collate_fn(examples):
             max_input_size = max(len(example[dataloader_cfg["input_key"]]) for example in examples)
             max_length = min(max_input_size, tokenizer.model_max_length)
@@ -43,9 +42,10 @@ class Dataset:
                 return_tensors="pt",
             )
 
-            for k in examples[0].keys():
-                if k not in tokenized:
-                    tokenized[k] = [example[k] for example in examples]
+            if return_attrs:
+                for k in examples[0].keys():
+                    if k not in tokenized:
+                        tokenized[k] = [example[k] for example in examples]
 
             return tokenized
 
