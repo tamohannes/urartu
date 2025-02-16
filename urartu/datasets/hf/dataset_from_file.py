@@ -46,18 +46,16 @@ class DatasetFromFile(Dataset):
         if not data_files_path.is_dir():
             raise TypeError(f"Path: '{self.cfg.data_files}' is not a valid directory")
 
-        if self.cfg.file_extensions.startswith("json"):
+        if self.cfg.file_extension.startswith("json"):
             file_format = "json"
-        elif self.cfg.file_extensions.startswith("txt"):
+        elif self.cfg.file_extension.startswith("txt"):
             file_format = "txt"
         else:
-            raise KeyError(
-                f"Files in '{self.cfg.file_extensions}' format are not supported"
-            )
+            raise KeyError(f"Files in '{self.cfg.file_extension}' format are not supported")
 
         data_files = [
             str(file)
-            for file in data_files_path.rglob("*." + file_format)
+            for file in data_files_path.rglob("*." + self.cfg.file_extension)
             if not file.name.startswith(".") and not file.name.startswith("_")
         ]
         self.dataset = load_dataset(file_format, data_files=data_files)["train"]
