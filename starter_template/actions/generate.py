@@ -1,6 +1,5 @@
-from omegaconf import DictConfig
 from aim import Run, Text
-
+from omegaconf import DictConfig
 from tqdm import tqdm
 
 from urartu.common.action import Action
