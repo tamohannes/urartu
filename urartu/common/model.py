@@ -48,16 +48,18 @@ class Model:
     @property
     def model(self):
         """
-        Abstract property to access the instantiated model.
-
-        Raises:
-            NotImplementedError: If the property is not implemented in a subclass, indicating that access to the model
-                                 is not set up properly.
+        Property to access the instantiated model.
         """
-        raise NotImplementedError("property 'model' instantiation is not implemented")
+        return self._model
 
     @model.setter
-    def model(self, value: AutoModelForCausalLM):
+    def model(self, value: Any):
+        """
+        Setter for the model property.
+
+        Args:
+            value (Any): The model instance to be set.
+        """
         self._model = value
 
     def generate(self, prompt):
