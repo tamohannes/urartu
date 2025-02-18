@@ -2,7 +2,7 @@ from typing import Any, Dict, List
 
 import hydra
 
-from .device import Device
+from transformers import AutoModelForCausalLM
 
 
 class Model:
@@ -55,6 +55,10 @@ class Model:
                                  is not set up properly.
         """
         raise NotImplementedError("property 'model' instantiation is not implemented")
+
+    @model.setter
+    def model(self, value: AutoModelForCausalLM):
+        self._model = value
 
     def generate(self, prompt):
         """
