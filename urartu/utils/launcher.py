@@ -43,18 +43,18 @@ def create_submitit_executor(cfg: Dict):
     # Update parameters to align with _make_sbatch_string
     executor.update_parameters(
         name=cfg["slurm"]["name"],
-        comment=cfg["slurm"]["comment"],
-        account=cfg["slurm"]["account"],
-        partition=cfg["slurm"]["partition"],
+        slurm_comment=cfg["slurm"]["comment"],
+        slurm_account=cfg["slurm"]["account"],
+        slurm_partition=cfg["slurm"]["partition"],
         timeout_min=cfg["slurm"]["timeout_min"],
-        constraint=cfg["slurm"]["constraint"],
-        mem=f"{cfg['slurm']['mem']}G",
-        nodelist=cfg["slurm"]["nodelist"],
+        slurm_constraint=cfg["slurm"]["constraint"],
+        slurm_mem=f"{cfg['slurm']['mem']}G",
+        slurm_nodelist=cfg["slurm"]["nodelist"],
         nodes=cfg["slurm"]["nodes"],
         tasks_per_node=cfg["slurm"]["tasks_per_node"],
         gpus_per_node=cfg["slurm"]["gpus_per_node"],
         cpus_per_task=cfg["slurm"]["cpus_per_task"],
-        additional_parameters=cfg["slurm"]["additional_parameters"],
+        slurm_additional_parameters=cfg["slurm"]["additional_parameters"],
     )
     return executor
 
