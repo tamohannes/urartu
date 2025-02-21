@@ -60,9 +60,7 @@ def main(cfg: DictConfig) -> None:
     # Verify specific action file exists
     action_file_path = cwd.joinpath("actions", f"{cfg.action_name}.py")
     if action_file_path.exists():
-        logging.info(
-            f"The action file '{action_file_path}' is located and is ready to be used!"
-        )
+        logging.info(f"The action file '{action_file_path}' is located and is ready to be used!")
     else:
         logging.error(
             f"The action file '{action_file_path}' does not exist."
@@ -83,15 +81,41 @@ def main(cfg: DictConfig) -> None:
         os.makedirs(run_dir, exist_ok=True)
 
     log_file = run_dir.joinpath("output.log")
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        handlers=[logging.FileHandler(log_file), logging.StreamHandler()],
-    )
 
-    # Redirect stdout and stderr to log file
-    sys.stdout = open(log_file, "a")
-    sys.stderr = sys.stdout
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    file_handler = logging.FileHandler(log_file)
+    stream_handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    file_handler.setFormatter(formatter)
+    stream_handler.setFormatter(formatter)
+    root_logger.handlers = [file_handler, stream_handler]
+
+    class TeeHandler:
+        def __init__(self, filename, stream):
+            self.terminal = stream
+            self.log = open(filename, 'a')
+
+        def write(self, message):
+            self.terminal.write(message)
+            self.log.write(message)
+            self.flush()
+
+        def flush(self):
+            self.terminal.flush()
+            self.log.flush()
+
+        def fileno(self):
+            return self.terminal.fileno()
+
+        def isatty(self):
+            return self.terminal.isatty()
+
+        def close(self):
+            self.log.close()
+
+    sys.stdout = TeeHandler(log_file, sys.stdout)
+    sys.stderr = TeeHandler(log_file, sys.stderr)
 
     with open(run_dir.joinpath("notes.md"), "w") as f:
         pass
