@@ -135,25 +135,49 @@ def main(cfg: DictConfig) -> None:
         )
         aim_run.set("cfg", cfg, strict=False)
 
-    if cfg.slurm.use_slurm:
-        try:
-            import submitit  # NOQA
-        except ImportError:
-            raise ImportError("Please 'pip install submitit' to schedule jobs on SLURM")
+    try:
+        if cfg.slurm.use_slurm:
+            try:
+                import submitit  # NOQA
+            except ImportError:
+                raise ImportError("Please 'pip install submitit' to schedule jobs on SLURM")
 
-        launch_on_slurm(
-            module=cwd,
-            action_name=cfg.action_name,
-            cfg=cfg,
-            aim_run=aim_run,
-        )
-    else:
-        launch(
-            module=cwd,
-            action_name=cfg.action_name,
-            cfg=cfg,
-            aim_run=aim_run,
-        )
-
-    if cfg.aim.use_aim and aim_run.active:
-        aim_run.close()
+            try:
+                launch_on_slurm(
+                    module=cwd,
+                    action_name=cfg.action_name,
+                    cfg=cfg,
+                    aim_run=aim_run,
+                )
+            except submitit.core.utils.FailedJobError as e:
+                logging.error(f"Slurm job failed: {e}")
+                raise
+            except submitit.core.utils.FailedSubmissionError as e:
+                logging.error(f"Failed to submit job to SLURM: {e}")
+                raise
+            except RuntimeError as e:
+                if "Could not detect 'srun'" in str(e):
+                    logging.error("Not running on a SLURM cluster or 'srun' command not available")
+                else:
+                    logging.error(f"Runtime error during SLURM job execution: {e}")
+                raise
+        else:
+            try:
+                launch(
+                    module=cwd,
+                    action_name=cfg.action_name,
+                    cfg=cfg,
+                    aim_run=aim_run,
+                )
+            except ImportError as e:
+                logging.error(f"Failed to import required module for local execution: {e}")
+                raise
+            except Exception as e:
+                logging.error(f"Error during local job execution: {e}")
+                raise
+    except Exception as e:
+        logging.error(f"Unexpected error: {e}")
+        raise
+    finally:
+        if aim_run:
+            aim_run.close()

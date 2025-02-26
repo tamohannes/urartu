@@ -38,7 +38,7 @@ class ResumableSlurmJob:
         self.action_name = action_name
         self.cfg = cfg
         self.aim_run = None
-        if self.cfg["aim"]["use_aim"]:
+        if self.cfg.aim.use_aim:
             self.aim_run_hash = aim_run.hash
 
     def get_aim_run(self):
@@ -48,8 +48,8 @@ class ResumableSlurmJob:
         Returns:
             Run: The Aim run object associated with the current job.
         """
-        if self.cfg["aim"]["use_aim"] and self.aim_run is None:
-            self.aim_run = Run(self.aim_run_hash, repo=self.cfg["aim"]["repo"])
+        if self.cfg.aim.use_aim and self.aim_run is None:
+            self.aim_run = Run(self.aim_run_hash, repo=self.cfg.aim.repo)
         return self.aim_run
 
     def __call__(self):
@@ -61,11 +61,11 @@ class ResumableSlurmJob:
 
         environment = submitit.JobEnvironment()
         master_ip = environment.hostnames[0]
-        master_port = self.cfg["slurm"]["port_id"]
-        self.cfg["slurm"]["init_method"] = "tcp"
-        self.cfg["slurm"]["run_id"] = f"{master_ip}:{master_port}"
+        master_port = self.cfg.slurm.port_id
+        self.cfg.slurm.init_method = "tcp"
+        self.cfg.slurm.run_id = f"{master_ip}:{master_port}"
 
-        if self.cfg["aim"]["use_aim"]:
+        if self.cfg.aim.use_aim:
             self.get_aim_run()
             self.aim_run.set(
                 "job",
