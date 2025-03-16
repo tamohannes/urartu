@@ -1,10 +1,13 @@
 import logging
 import os
-import secrets
 import sys
 from pathlib import Path
+import re
+import shutil
+from abc import ABC, abstractmethod
+from typing import List, Optional
 
-from aim import Run
+from aim import Repo, Run
 from hydra.core.hydra_config import HydraConfig
 from hydra.core.plugins import Plugins
 from omegaconf import OmegaConf
@@ -14,26 +17,208 @@ from urartu.utils.launcher import launch, launch_on_slurm
 
 Plugins.instance().register(UrartuPlugin)
 
-
 import hydra
 from omegaconf import DictConfig
 
 
-@hydra.main(version_base=None, config_path="config", config_name="main")
-def main(cfg: DictConfig) -> None:
-    """
-    Main function that sets up and executes a job based on provided configuration. It prepares
-    the environment, handles logging, and directs job execution either locally or on a Slurm cluster
-    depending on the configuration. Utilizes the Hydra framework for dynamic configuration management.
+class Command(ABC):
+    """Base class for all commands."""
+    
+    @abstractmethod
+    def execute(self) -> None:
+        """Execute the command."""
+        pass
 
+    @staticmethod
+    @abstractmethod
+    def get_command_name() -> str:
+        """Get the command name used in CLI."""
+        pass
+
+
+class CleanCommand(Command):
+    """Command to clean up runs that are not present in the Aim repository."""
+    
+    def __init__(self, aim_repo_path: str, runs_dir: str):
+        self.aim_repo_path = aim_repo_path
+        self.runs_dir = runs_dir
+        
+    @staticmethod
+    def get_command_name() -> str:
+        return "clean"
+        
+    def execute(self) -> None:
+        # Set up logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[logging.StreamHandler()]
+        )
+
+        # Get run hashes from Aim repo
+        repo = Repo(self.aim_repo_path)
+        run_hashes = repo.list_all_runs()
+        logging.info(f"Total number of runs found: {len(run_hashes)}")
+
+        run_dir = Path(self.runs_dir)
+        if not run_dir.exists():
+            logging.warning(f"Run directory {run_dir} does not exist")
+            return
+
+        self._process_action_directories(run_dir, run_hashes)
+
+    def _process_action_directories(self, run_dir: Path, run_hashes: List[str]) -> None:
+        """Process each action directory."""
+        for action_dir in run_dir.iterdir():
+            if not action_dir.is_dir():
+                continue
+
+            logging.info(f"Processing action directory: {action_dir.name}")
+            self._handle_debug_directory(action_dir)
+            self._clean_run_directories(action_dir, run_hashes)
+
+    def _handle_debug_directory(self, action_dir: Path) -> None:
+        """Delete debug directory if it exists."""
+        debug_dir = action_dir / "debug"
+        if debug_dir.exists():
+            try:
+                shutil.rmtree(debug_dir)
+                logging.info(f"Deleted debug directory: {debug_dir}")
+            except Exception as e:
+                logging.error(f"Failed to delete debug directory: {str(e)}")
+
+    def _clean_run_directories(self, action_dir: Path, run_hashes: List[str]) -> None:
+        """Clean run directories that don't have valid hashes."""
+        dirs_to_delete = []
+        date_pattern = r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}"
+
+        for dir_path in action_dir.glob("**/"):
+            if "_multirun" in str(dir_path):
+                self._handle_multirun_directory(dir_path, date_pattern, run_hashes, dirs_to_delete)
+            elif re.match(date_pattern, dir_path.name):
+                self._handle_regular_directory(dir_path, run_hashes, dirs_to_delete)
+
+        self._delete_marked_directories(action_dir.name, dirs_to_delete)
+
+    def _handle_multirun_directory(self, dir_path: Path, date_pattern: str, 
+                                 run_hashes: List[str], dirs_to_delete: List[Path]) -> None:
+        """Handle multirun directory checking."""
+        if re.match(date_pattern + "_multirun$", dir_path.name):
+            all_num_dirs = []
+            invalid_num_dirs = []
+
+            for num_dir in dir_path.iterdir():
+                if num_dir.is_dir() and num_dir.name.isdigit():
+                    all_num_dirs.append(num_dir)
+                    if not self._has_valid_hash(num_dir, run_hashes):
+                        invalid_num_dirs.append(num_dir)
+
+            if all_num_dirs and len(all_num_dirs) == len(invalid_num_dirs):
+                dirs_to_delete.append(dir_path)
+                logging.info(f"Multirun directory {dir_path} has no valid runs, marking for deletion")
+            elif invalid_num_dirs:
+                dirs_to_delete.extend(invalid_num_dirs)
+                logging.info(f"Found {len(invalid_num_dirs)} invalid runs in multirun directory {dir_path}")
+
+    def _handle_regular_directory(self, dir_path: Path, run_hashes: List[str], 
+                                dirs_to_delete: List[Path]) -> None:
+        """Handle regular directory checking."""
+        if not self._has_valid_hash(dir_path, run_hashes):
+            dirs_to_delete.append(dir_path)
+            logging.info(f"Directory {dir_path} has no matching run hash yaml file")
+
+    def _has_valid_hash(self, dir_path: Path, run_hashes: List[str]) -> bool:
+        """Check if directory contains a yaml file with a valid hash."""
+        yaml_files = list(dir_path.glob("*.yaml"))
+        return any(yaml_file.stem in run_hashes for yaml_file in yaml_files)
+
+    def _delete_marked_directories(self, action_name: str, dirs_to_delete: List[Path]) -> None:
+        """Delete all marked directories."""
+        if dirs_to_delete:
+            logging.info(f"Found {len(dirs_to_delete)} directories to delete in action {action_name}")
+            for dir_path in dirs_to_delete:
+                try:
+                    shutil.rmtree(dir_path)
+                    logging.info(f"Deleted directory: {dir_path}")
+                except Exception as e:
+                    logging.error(f"Failed to delete directory {dir_path}: {str(e)}")
+        else:
+            logging.info(f"No directories to delete in action {action_name}")
+
+
+class CommandRegistry:
+    """Registry for all available commands."""
+    
+    _commands = {
+        CleanCommand.get_command_name(): CleanCommand
+    }
+    
+    @classmethod
+    def get_command(cls, command_name: str, **kwargs) -> Optional[Command]:
+        """Get a command instance by name."""
+        command_class = cls._commands.get(command_name)
+        if command_class:
+            return command_class(**kwargs)
+        return None
+
+    @classmethod
+    def register_command(cls, command_class: type) -> None:
+        """Register a new command."""
+        cls._commands[command_class.get_command_name()] = command_class
+
+
+def parse_command_args(args: List[str]) -> dict:
+    """Parse command arguments in the format key=value.
+    
     Args:
-        cfg (DictConfig): A Hydra-generated configuration object that includes settings for job execution,
-                          directory paths, and optional SLURM and AIM integration.
-
-    Raises:
-        FileNotFoundError: If necessary directories or files are missing in the expected paths.
-        ImportError: If required libraries (like submitit for SLURM) are not available.
+        args: List of command line arguments
+        
+    Returns:
+        Dictionary of parsed arguments
     """
+    parsed_args = {}
+    for arg in args:
+        if "=" not in arg:
+            continue
+        key, value = arg.split("=", 1)
+        parsed_args[key] = value
+    return parsed_args
+
+
+def main():
+    """Main entry point for the package."""
+    if len(sys.argv) > 1 and not any("action_config" in i for i in sys.argv[1:]):
+        cli_command = sys.argv[1]
+        command_args = parse_command_args(sys.argv[2:])
+        
+        if cli_command == "clean":
+            required_args = {"aim_repo", "runs_dir"}
+            missing_args = required_args - set(command_args.keys())
+            
+            if missing_args:
+                raise ValueError(f"Missing required arguments: {', '.join(missing_args)}")
+            
+            try:
+                command = CommandRegistry.get_command(
+                    "clean",
+                    aim_repo_path=command_args["aim_repo"],
+                    runs_dir=command_args["runs_dir"]
+                )
+                if command:
+                    command.execute()
+                return
+            except Exception as e:
+                raise ValueError(f"Failed to execute command: {str(e)}")
+        else:
+            raise KeyError(f"Unknown command: {cli_command}")
+
+    # If we get here, proceed with normal Hydra execution
+    _hydra_main()
+
+
+@hydra.main(version_base=None, config_path="config", config_name="main")
+def _hydra_main(cfg: DictConfig) -> None:
+    """Hydra main function for running experiments."""
     hydra_cfg = HydraConfig.get()
     cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True, enum_to_str=True))
 
@@ -80,7 +265,22 @@ def main(cfg: DictConfig) -> None:
             run_dir = Path(*parts)
         os.makedirs(run_dir, exist_ok=True)
 
-    log_file = run_dir.joinpath("output.log")
+    aim_run = None
+    if cfg.aim.use_aim:
+        aim_run = Run(
+            repo=cfg.aim.repo,
+            experiment=cfg.action_config.experiment_name,
+            log_system_params=cfg.aim.log_system_params,
+        )
+        aim_run.set("cfg", cfg, strict=False)
+        if cfg.debug:
+            aim_run.add_tag("debug")
+        cfg.aim.hash = aim_run.hash
+
+    if cfg.aim.use_aim:
+        log_file = run_dir.joinpath(f"{aim_run.hash}.log")
+    else:
+        log_file = run_dir.joinpath("output.log")
 
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
@@ -117,23 +317,13 @@ def main(cfg: DictConfig) -> None:
     sys.stdout = TeeHandler(log_file, sys.stdout)
     sys.stderr = TeeHandler(log_file, sys.stderr)
 
-    with open(run_dir.joinpath("notes.md"), "w") as f:
-        pass
-
     cfg.run_dir = str(run_dir)
-    run_hash = secrets.token_hex(8)
-    cfg.action_config.run_hash = run_hash
-    with open(run_dir.joinpath("cfg.yaml"), "w") as f:
-        OmegaConf.save(config=cfg, f=f)
-
-    aim_run = None
     if cfg.aim.use_aim:
-        aim_run = Run(
-            repo=cfg.aim.repo,
-            experiment=cfg.action_config.experiment_name,
-            log_system_params=cfg.aim.log_system_params,
-        )
-        aim_run.set("cfg", cfg, strict=False)
+        with open(run_dir.joinpath(f"{aim_run.hash}.yaml"), "w") as f:
+            OmegaConf.save(config=cfg, f=f)
+    else:
+        with open(run_dir.joinpath("cfg.yaml"), "w") as f:
+            OmegaConf.save(config=cfg, f=f)
 
     try:
         if cfg.slurm.use_slurm:
@@ -181,3 +371,7 @@ def main(cfg: DictConfig) -> None:
     finally:
         if aim_run:
             aim_run.close()
+
+
+if __name__ == "__main__":
+    main()
