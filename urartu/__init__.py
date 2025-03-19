@@ -1,10 +1,10 @@
 import logging
 import os
-import sys
-from pathlib import Path
 import re
 import shutil
+import sys
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import List, Optional
 
 from aim import Repo, Run
@@ -23,7 +23,7 @@ from omegaconf import DictConfig
 
 class Command(ABC):
     """Base class for all commands."""
-    
+
     @abstractmethod
     def execute(self) -> None:
         """Execute the command."""
@@ -38,21 +38,21 @@ class Command(ABC):
 
 class CleanCommand(Command):
     """Command to clean up runs that are not present in the Aim repository."""
-    
+
     def __init__(self, aim_repo_path: str, runs_dir: str):
         self.aim_repo_path = aim_repo_path
         self.runs_dir = runs_dir
-        
+
     @staticmethod
     def get_command_name() -> str:
         return "clean"
-        
+
     def execute(self) -> None:
         # Set up logging
         logging.basicConfig(
             level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[logging.StreamHandler()]
+            format="%(asctime)s - %(levelname)s - %(message)s",
+            handlers=[logging.StreamHandler()],
         )
 
         # Get run hashes from Aim repo
@@ -94,14 +94,21 @@ class CleanCommand(Command):
 
         for dir_path in action_dir.glob("**/"):
             if "_multirun" in str(dir_path):
-                self._handle_multirun_directory(dir_path, date_pattern, run_hashes, dirs_to_delete)
+                self._handle_multirun_directory(
+                    dir_path, date_pattern, run_hashes, dirs_to_delete
+                )
             elif re.match(date_pattern, dir_path.name):
                 self._handle_regular_directory(dir_path, run_hashes, dirs_to_delete)
 
         self._delete_marked_directories(action_dir.name, dirs_to_delete)
 
-    def _handle_multirun_directory(self, dir_path: Path, date_pattern: str, 
-                                 run_hashes: List[str], dirs_to_delete: List[Path]) -> None:
+    def _handle_multirun_directory(
+        self,
+        dir_path: Path,
+        date_pattern: str,
+        run_hashes: List[str],
+        dirs_to_delete: List[Path],
+    ) -> None:
         """Handle multirun directory checking."""
         if re.match(date_pattern + "_multirun$", dir_path.name):
             all_num_dirs = []
@@ -115,13 +122,18 @@ class CleanCommand(Command):
 
             if all_num_dirs and len(all_num_dirs) == len(invalid_num_dirs):
                 dirs_to_delete.append(dir_path)
-                logging.info(f"Multirun directory {dir_path} has no valid runs, marking for deletion")
+                logging.info(
+                    f"Multirun directory {dir_path} has no valid runs, marking for deletion"
+                )
             elif invalid_num_dirs:
                 dirs_to_delete.extend(invalid_num_dirs)
-                logging.info(f"Found {len(invalid_num_dirs)} invalid runs in multirun directory {dir_path}")
+                logging.info(
+                    f"Found {len(invalid_num_dirs)} invalid runs in multirun directory {dir_path}"
+                )
 
-    def _handle_regular_directory(self, dir_path: Path, run_hashes: List[str], 
-                                dirs_to_delete: List[Path]) -> None:
+    def _handle_regular_directory(
+        self, dir_path: Path, run_hashes: List[str], dirs_to_delete: List[Path]
+    ) -> None:
         """Handle regular directory checking."""
         if not self._has_valid_hash(dir_path, run_hashes):
             dirs_to_delete.append(dir_path)
@@ -132,10 +144,14 @@ class CleanCommand(Command):
         yaml_files = list(dir_path.glob("*.yaml"))
         return any(yaml_file.stem in run_hashes for yaml_file in yaml_files)
 
-    def _delete_marked_directories(self, action_name: str, dirs_to_delete: List[Path]) -> None:
+    def _delete_marked_directories(
+        self, action_name: str, dirs_to_delete: List[Path]
+    ) -> None:
         """Delete all marked directories."""
         if dirs_to_delete:
-            logging.info(f"Found {len(dirs_to_delete)} directories to delete in action {action_name}")
+            logging.info(
+                f"Found {len(dirs_to_delete)} directories to delete in action {action_name}"
+            )
             for dir_path in dirs_to_delete:
                 try:
                     shutil.rmtree(dir_path)
@@ -148,11 +164,9 @@ class CleanCommand(Command):
 
 class CommandRegistry:
     """Registry for all available commands."""
-    
-    _commands = {
-        CleanCommand.get_command_name(): CleanCommand
-    }
-    
+
+    _commands = {CleanCommand.get_command_name(): CleanCommand}
+
     @classmethod
     def get_command(cls, command_name: str, **kwargs) -> Optional[Command]:
         """Get a command instance by name."""
@@ -169,10 +183,10 @@ class CommandRegistry:
 
 def parse_command_args(args: List[str]) -> dict:
     """Parse command arguments in the format key=value.
-    
+
     Args:
         args: List of command line arguments
-        
+
     Returns:
         Dictionary of parsed arguments
     """
@@ -190,19 +204,21 @@ def main():
     if len(sys.argv) > 1 and not any("action_config" in i for i in sys.argv[1:]):
         cli_command = sys.argv[1]
         command_args = parse_command_args(sys.argv[2:])
-        
+
         if cli_command == "clean":
             required_args = {"aim_repo", "runs_dir"}
             missing_args = required_args - set(command_args.keys())
-            
+
             if missing_args:
-                raise ValueError(f"Missing required arguments: {', '.join(missing_args)}")
-            
+                raise ValueError(
+                    f"Missing required arguments: {', '.join(missing_args)}"
+                )
+
             try:
                 command = CommandRegistry.get_command(
                     "clean",
                     aim_repo_path=command_args["aim_repo"],
-                    runs_dir=command_args["runs_dir"]
+                    runs_dir=command_args["runs_dir"],
                 )
                 if command:
                     command.execute()
@@ -245,7 +261,9 @@ def _hydra_main(cfg: DictConfig) -> None:
     # Verify specific action file exists
     action_file_path = cwd.joinpath("actions", f"{cfg.action_name}.py")
     if action_file_path.exists():
-        logging.info(f"The action file '{action_file_path}' is located and is ready to be used!")
+        logging.info(
+            f"The action file '{action_file_path}' is located and is ready to be used!"
+        )
     else:
         logging.error(
             f"The action file '{action_file_path}' does not exist."
@@ -294,7 +312,7 @@ def _hydra_main(cfg: DictConfig) -> None:
     class TeeHandler:
         def __init__(self, filename, stream):
             self.terminal = stream
-            self.log = open(filename, 'a')
+            self.log = open(filename, "a")
 
         def write(self, message):
             self.terminal.write(message)
@@ -330,7 +348,9 @@ def _hydra_main(cfg: DictConfig) -> None:
             try:
                 import submitit  # NOQA
             except ImportError:
-                raise ImportError("Please 'pip install submitit' to schedule jobs on SLURM")
+                raise ImportError(
+                    "Please 'pip install submitit' to schedule jobs on SLURM"
+                )
 
             try:
                 launch_on_slurm(
@@ -347,7 +367,9 @@ def _hydra_main(cfg: DictConfig) -> None:
                 raise
             except RuntimeError as e:
                 if "Could not detect 'srun'" in str(e):
-                    logging.error("Not running on a SLURM cluster or 'srun' command not available")
+                    logging.error(
+                        "Not running on a SLURM cluster or 'srun' command not available"
+                    )
                 else:
                     logging.error(f"Runtime error during SLURM job execution: {e}")
                 raise
@@ -360,7 +382,9 @@ def _hydra_main(cfg: DictConfig) -> None:
                     aim_run=aim_run,
                 )
             except ImportError as e:
-                logging.error(f"Failed to import required module for local execution: {e}")
+                logging.error(
+                    f"Failed to import required module for local execution: {e}"
+                )
                 raise
             except Exception as e:
                 logging.error(f"Error during local job execution: {e}")

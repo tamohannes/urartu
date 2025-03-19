@@ -51,7 +51,9 @@ class DatasetFromFile(Dataset):
         elif self.cfg.file_extension.startswith("txt"):
             file_format = "txt"
         else:
-            raise KeyError(f"Files in '{self.cfg.file_extension}' format are not supported")
+            raise KeyError(
+                f"Files in '{self.cfg.file_extension}' format are not supported"
+            )
 
         data_files = [
             str(file)

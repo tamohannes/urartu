@@ -47,7 +47,11 @@ class ModelForCausalLM(Model):
                 self.cfg.name,
                 cache_dir=self.cfg.get("cache_dir"),
                 device_map=Device.get_device(),
-                torch_dtype=eval_dtype(self.cfg.get("dtype")) if self.cfg.get("dtype") is not None else None,
+                torch_dtype=(
+                    eval_dtype(self.cfg.get("dtype"))
+                    if self.cfg.get("dtype") is not None
+                    else None
+                ),
                 token=self.cfg.get("api_token"),
                 trust_remote_code=self.cfg.get("trust_remote_code"),
             )
@@ -89,13 +93,19 @@ class ModelForCausalLM(Model):
             generate_cfg = self.cfg.get("generate")
         self.model.eval()
 
-        prompt_tokenized = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
+        prompt_tokenized = self.tokenizer(
+            prompt, return_tensors="pt", padding=True, truncation=True
+        )
         prompt_tensor = prompt_tokenized["input_ids"].to(self.model.device)
         attention_mask = prompt_tokenized["attention_mask"].to(self.model.device)
         with torch.no_grad():
-            output_tokenized = self.model.generate(input_ids=prompt_tensor, attention_mask=attention_mask, **generate_cfg)
+            output_tokenized = self.model.generate(
+                input_ids=prompt_tensor, attention_mask=attention_mask, **generate_cfg
+            )
         if "output_scores" in generate_cfg:
-            output = self.tokenizer.decode(output_tokenized["sequences"][0], skip_special_tokens=True)
+            output = self.tokenizer.decode(
+                output_tokenized["sequences"][0], skip_special_tokens=True
+            )
             return output, output_tokenized["scores"]
         else:
             return self.tokenizer.decode(output_tokenized[0], skip_special_tokens=True)

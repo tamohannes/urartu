@@ -36,6 +36,7 @@ class ModelOpenAI(Model):
         """
         if self._model is None:
             from langchain_openai import AzureChatOpenAI
+
             self._model = AzureChatOpenAI(
                 deployment_name=self.cfg.name,
                 openai_api_type=self.cfg.openai_api_type,
@@ -58,6 +59,7 @@ class ModelOpenAI(Model):
         """
         # Import only when needed
         from langchain.schema import HumanMessage
+
         output = self.model(HumanMessage(content=prompt))
         return output
 
@@ -74,6 +76,7 @@ class ModelOpenAI(Model):
         """
         # Import only when needed
         import tiktoken
+
         encoding = tiktoken.encoding_for_model(encoding_name)
         num_tokens = len(encoding.encode(string))
         return num_tokens
