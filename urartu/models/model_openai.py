@@ -1,10 +1,5 @@
 from typing import Tuple, Union
 
-import tiktoken
-from langchain.schema import HumanMessage
-from langchain_openai import AzureChatOpenAI
-from transformers import AutoModelForCausalLM
-
 from urartu.common.model import Model
 
 
@@ -31,17 +26,16 @@ class ModelOpenAI(Model):
                  API types, API versions, endpoint, and API keys.
         """
         super().__init__(cfg)
+        self._tiktoken = None
+        self._AzureChatOpenAI = None
 
     @property
-    def model(self) -> AutoModelForCausalLM:
+    def model(self):
         """
-        Retrieves or creates an instance of AzureChatOpenAI as a causal language model,
-        configured as specified in the class configuration.
-
-        Returns:
-            An instance of AzureChatOpenAI configured and ready to interact.
+        Lazily imports and creates an instance of AzureChatOpenAI
         """
         if self._model is None:
+            from langchain_openai import AzureChatOpenAI
             self._model = AzureChatOpenAI(
                 deployment_name=self.cfg.name,
                 openai_api_type=self.cfg.openai_api_type,
@@ -62,8 +56,9 @@ class ModelOpenAI(Model):
         Returns:
             A string containing the generated response from the model.
         """
+        # Import only when needed
+        from langchain.schema import HumanMessage
         output = self.model(HumanMessage(content=prompt))
-
         return output
 
     def _get_num_tokens(self, string: str, encoding_name: str = "gpt-3.5-turbo") -> int:
@@ -77,6 +72,8 @@ class ModelOpenAI(Model):
         Returns:
             An integer representing the number of tokens.
         """
+        # Import only when needed
+        import tiktoken
         encoding = tiktoken.encoding_for_model(encoding_name)
         num_tokens = len(encoding.encode(string))
         return num_tokens

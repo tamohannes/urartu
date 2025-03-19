@@ -6,7 +6,7 @@ from urartu.common.model import Model
 from urartu.utils.dtype import eval_dtype
 
 
-class ModelCausalLanguage(Model):
+class ModelForCausalLM(Model):
     """
     A class for working with a causal language model (CLM) that handles model initialization,
     configuration, and text generation using the model and tokenizer from the Hugging Face
@@ -45,10 +45,10 @@ class ModelCausalLanguage(Model):
         if self._model is None:
             self._model = AutoModelForCausalLM.from_pretrained(
                 self.cfg.name,
-                cache_dir=self.cfg.cache_dir,
+                cache_dir=self.cfg.get("cache_dir"),
                 device_map=Device.get_device(),
-                torch_dtype=eval_dtype(self.cfg.dtype),
-                token=self.cfg.api_token,
+                torch_dtype=eval_dtype(self.cfg.get("dtype")) if self.cfg.get("dtype") is not None else None,
+                token=self.cfg.get("api_token"),
                 trust_remote_code=self.cfg.get("trust_remote_code"),
             )
             for param in self._model.parameters():
