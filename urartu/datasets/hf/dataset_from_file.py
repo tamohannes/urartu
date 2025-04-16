@@ -60,4 +60,14 @@ class DatasetFromFile(Dataset):
             for file in data_files_path.rglob("*." + self.cfg.file_extension)
             if not file.name.startswith(".") and not file.name.startswith("_")
         ]
-        self.dataset = load_dataset(file_format, data_files=data_files)["train"]
+        if "train_size" in self.cfg:
+            dataset = load_dataset(file_format, data_files=data_files)["train"]
+            train_size = int(self.cfg.train_size * len(dataset))
+
+            self.dataset = dataset.train_test_split(
+                train_size=train_size,
+                seed=self.cfg.seed if "seed" in self.cfg else 42
+            )
+        else:
+            self.dataset = load_dataset(file_format, data_files=data_files)
+        return self.dataset
