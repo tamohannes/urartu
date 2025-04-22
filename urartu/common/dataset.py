@@ -61,7 +61,7 @@ class Dataset:
         """
         raise NotImplementedError("method '_get_dataset' is not implemented")
 
-    def get_dataloader(self, dataloader_cfg: Dict[str, Any], tokenizer, return_attrs=False):
+    def get_dataloader(self, dataloader_cfg: Dict[str, Any], tokenizer, return_attrs: bool = False):
         """
         Creates and returns a DataLoader for the dataset, with optional tokenization and attribute inclusion.
 
@@ -109,6 +109,7 @@ class Dataset:
                 batch_size=dataloader_cfg.get("batch_size", 8),
                 num_workers=dataloader_cfg.get("num_workers", 2),
                 pin_memory=True,
+                persistent_workers=True,
                 collate_fn=collate_fn,
             )
             for split_name in self.dataset.keys()
