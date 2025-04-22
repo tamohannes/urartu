@@ -54,6 +54,7 @@ class ModelForCausalLM(Model):
                 ),
                 token=self.cfg.get("api_token"),
                 trust_remote_code=self.cfg.get("trust_remote_code"),
+                revision=self.cfg.get("revision"),
             )
             for param in self._model.parameters():
                 param.requires_grad = False
