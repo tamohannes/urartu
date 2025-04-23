@@ -91,6 +91,7 @@ class Dataset:
                 [example[dataloader_cfg["input_key"]] for example in examples],
                 truncation=True,
                 padding=True,
+                padding_side="right",
                 max_length=max_length,
                 return_tensors="pt",
             )
