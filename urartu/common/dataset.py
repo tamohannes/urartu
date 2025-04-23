@@ -87,7 +87,6 @@ class Dataset:
                 if example_length > tokenizer.model_max_length:
                     logging.warning(f"Example input length {example_length} exceeds tokenizer.model_max_length {tokenizer.model_max_length}.")
 
-            tokenizer.padding_side = "right"
             tokenized = tokenizer(
                 [example[dataloader_cfg["input_key"]] for example in examples],
                 truncation=True,
