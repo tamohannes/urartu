@@ -38,7 +38,6 @@ Or, if you prefer to install directly from the source:
     pip install -e .
     ```
 
-
 And just like that, you're all set! ✨ Use the following command anywhere in your system to access UrarTU:
 
 ```bash
@@ -49,26 +48,23 @@ urartu --help
 
 To jump right in with UrarTU, start with our `starter_template`. You can copy this to begin your project or check out the steps in our [Starter Template Setup](./starter_template_setup.md). Your setup will mirror what's found in this directory.
 
-
 Think of UrarTU as the foundational framework for your projects, similar to an abstract class in object-oriented programming (OOP).
 Your project acts as the concrete implementation, where UrarTU provides the foundational scaffolding.
 It includes high-level abstractions, configuration through `.yaml` files powered by [Hydra](https://github.com/facebookresearch/hydra), and `slurm` job management utilizing the [Submitit](https://github.com/facebookincubator/submitit) library.
 This setup ensures your projects are both flexible and robust, making your machine learning workflow efficient and scalable.
 It also includes key NLP features such as dataset readers, model loaders, and device handlers.
 
-
 Here's how to get started:
 1. Extend UrarTU: Inherit the structure of UrarTU and customize it by writing your own actions and configurations, akin to implementing methods from an abstract class in OOP.
-2.	Utilize Core Functionalities: Jumpstart your project with pre-defined functionalities:
+2. Utilize Core Functionalities: Jumpstart your project with pre-defined functionalities:
     - Datasets:
-	    - Load a HF (Hugging Face) dataset from a dictionary, a file, or directly from the HF hub.
-	- Models:
-	    - Use a HF model as a causal language model or integrate it into a pipeline.
-	    - Incorporate the OpenAI API for advanced modeling.
-3.	Customize Further: Develop and place your own classes within the corresponding directories of your project to meet your specific needs.
+        - Load a HF (Hugging Face) dataset from a dictionary, a file, or directly from the HF hub.
+    - Models:
+        - Use a HF model as a causal language model or integrate it into a pipeline.
+        - Incorporate the OpenAI API for advanced modeling.
+3. Customize Further: Develop and place your own classes within the corresponding directories of your project to meet your specific needs.
 
 By following these steps, you can efficiently set up and customize your machine learning projects with UrarTU.
-
 
 # **Firing Up 🔥**
 
@@ -102,7 +98,6 @@ urartu action_config=generate aim=aim slurm=slurm
 
 With these steps, you can effortlessly kickstart your machine learning experiments with UrarTU, whether for a single test or comprehensive multi-run analyses!
 
-
 # **Navigating the UrarTU Architecture**
 
 Dive into the structured world of UrarTU, where managing NLP components becomes straightforward and intuitive.
@@ -112,7 +107,6 @@ Dive into the structured world of UrarTU, where managing NLP components becomes 
 Set up your environment effortlessly with our configuration templates found in the `urartu/config` directory:
 - `urartu/config/main.yaml`: This primary configuration file lays the groundwork with default settings for all system keys.
 - `urartu/config/action_config` This space is dedicated to configurations specific to various actions.
-
 
 ## **Crafting Customizations**
 
@@ -132,14 +126,13 @@ Configuration files are prioritized in the following order: `urartu/config`, `st
 
 Select the approach that best fits your workflow and enjoy the customizability that UrarTU offers.
 
-
 ## **Actions: Shaping Functionality**
 
 At the heart of UrarTU is the `Action` class, which orchestrates all operations. This script manages everything from CLI arguments to the execution of the main function based on the `action_name` parameter.
 
 ## **Logging: Capture Every Detail**
 
-UrarTU is equipped with a comprehensive logging system to ensure no detail of your project’s execution is missed. Here’s how it works:
+UrarTU is equipped with a comprehensive logging system to ensure no detail of your project's execution is missed. Here's how it works:
 - Standard Runs: Every execution is meticulously logged and stored in a structured directory within your current working directory. The path format is:
 `.runs/${action_name}/${now:%Y-%m-%d}_${now:%H-%M-%S}`
 - Debug Mode: If the debug flag is enabled, logs are saved under: `.runs/debug/${action_name}/${now:%Y-%m-%d}_${now:%H-%M-%S}`
@@ -152,7 +145,6 @@ Each run directory is organized to contain essential files such as:
 
 Additional files may be included depending on the type of run, ensuring you have all the data you need at your fingertips.
 
-
 ## **Effortless Launch**
 
 Launching with UrarTU is a breeze, offering you two launch options:
@@ -162,9 +154,7 @@ Launching with UrarTU is a breeze, offering you two launch options:
 
 Choose your adventure and launch your projects with ease! 🚀
 
-
 Encountered any issues or have suggestions? Feel free to open an issue for support.
-
 
 # **Exploring the Experiments**
 Unveil insights with ease using UrarTU in partnership with [Aim](https://github.com/aimhubio/aim), the intuitive and powerful open-source AI metadata tracker. To access a rich trove of metrics captured by Aim, simply:

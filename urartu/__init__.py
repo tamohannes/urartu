@@ -201,32 +201,21 @@ def parse_command_args(args: List[str]) -> dict:
 
 def main():
     """Main entry point for the package."""
-    if len(sys.argv) > 1 and not any("action_config" in i for i in sys.argv[1:]):
-        cli_command = sys.argv[1]
-        command_args = parse_command_args(sys.argv[2:])
+    if len(sys.argv) == 1 or (len(sys.argv) == 2 and sys.argv[1] in ["--help", "-h"]):
+        print("""Usage: urartu action_config=ACTION_NAME [other_params]
 
-        if cli_command == "clean":
-            required_args = {"aim_repo", "runs_dir"}
-            missing_args = required_args - set(command_args.keys())
+Required arguments:
+  action_config=ACTION_NAME    Name of the action to run (must exist in actions/ directory)
 
-            if missing_args:
-                raise ValueError(
-                    f"Missing required arguments: {', '.join(missing_args)}"
-                )
+Optional arguments:
+  debug=true                  Run in debug mode
+  slurm.use_slurm=true       Run on SLURM cluster
+  aim.use_aim=true           Use Aim for experiment tracking
 
-            try:
-                command = CommandRegistry.get_command(
-                    "clean",
-                    aim_repo_path=command_args["aim_repo"],
-                    runs_dir=command_args["runs_dir"],
-                )
-                if command:
-                    command.execute()
-                return
-            except Exception as e:
-                raise ValueError(f"Failed to execute command: {str(e)}")
-        else:
-            raise KeyError(f"Unknown command: {cli_command}")
+Example:
+  urartu action_config=generate aim=aim slurm=slurm
+""")
+        return
 
     # If we get here, proceed with normal Hydra execution
     _hydra_main()
