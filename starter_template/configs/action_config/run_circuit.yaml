@@ -1,0 +1,63 @@
+# @package _global_
+action_name: run circuit
+debug: false
+
+action_config:
+  experiment_name: "discogp with blimp"
+  device: "cuda" # auto, cuda, cpu (default) 
+
+  task:
+    model:
+      type:
+        _target_: urartu.models.disco_gp.circuit_lm.CircuitTransformer
+      name: gpt2
+      dtype: torch.bfloat16
+      cache_dir: ""
+      generate:
+        max_length: 100
+        num_beams: 5
+        no_repeat_ngram_size: 2
+
+    dataset:
+      type:
+        _target_: urartu.datasets.hf.dataset_from_hub.DatasetFromHub
+      name: blimp
+      subset: generation
+      split: validation
+      input_key: "question"
+
+  weight_hparams:
+    use_weight_masks: True
+    gs_temp_weight: 0.01
+    logits_w_init: 1.0
+    lr: 0.1
+    lambda_sparse_init: 1.0
+    lambda_complete_init: 1.0
+    min_times_lambda_sparse: 1.
+    max_times_lambda_sparse: 1000.
+
+    train_epochs: 300
+    n_epoch_warmup_lambda_sparse: 500
+    n_epoch_cooldown_lambda_sparse: 1
+
+  edge_hparams:
+    use_edge_masks: True
+    gs_temp_edge: 0.01
+    logits_e_init: 1.0
+    lr: 0.1
+    lambda_sparse_init: 1.0
+    lambda_complete_init: 1.0
+    min_times_lambda_sparse: 1.
+    max_times_lambda_sparse: 1000.
+
+    train_epochs: 100,
+    n_epoch_warmup_lambda_sparse: 500,
+    n_epoch_cooldown_lambda_sparse: 1
+
+  task_cfg:
+    task_type: 'blimp'
+    task: 'anaphor_number_agreement'
+    batch_size: 6
+
+  exp_cfg:
+    evaluate_every: 1
