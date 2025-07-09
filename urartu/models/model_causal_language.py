@@ -107,6 +107,9 @@ class ModelForCausalLM(Model):
             output = self.tokenizer.decode(
                 output_tokenized["sequences"][0], skip_special_tokens=True
             )
-            return output, output_tokenized["scores"]
+            scores = output_tokenized["scores"]
+            if isinstance(scores, (list, tuple)):
+                scores = torch.stack(scores)  # Convert list of tensors to single tensor
+            return output, scores
         else:
             return self.tokenizer.decode(output_tokenized[0], skip_special_tokens=True)
