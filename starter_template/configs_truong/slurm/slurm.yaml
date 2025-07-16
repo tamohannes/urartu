@@ -1,0 +1,19 @@
+use_slurm: true
+name: "run_circuit"
+comment: "run_circuit job"
+account: "ukp-student"
+partition: "gpu"
+time_hours: 72
+time_minutes: 0
+constraint: ""
+timeout_min: 1000
+mem: 80
+port_id: 11337 
+nodelist: "bob,itchy,krusty,melvin,minerva,moe,penelope,rubeus,scratchy,turtok"
+nodes: 1
+tasks_per_node: 1
+cpus_per_task: 12
+gpus_per_node: 1
+num_proc_per_node: 1
+additional_parameters: {
+}

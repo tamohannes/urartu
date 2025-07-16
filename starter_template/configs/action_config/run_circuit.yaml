@@ -1,5 +1,5 @@
 # @package _global_
-action_name: run circuit
+action_name: run_circuit
 debug: false
 
 action_config:
@@ -12,7 +12,7 @@ action_config:
         _target_: urartu.models.disco_gp.circuit_lm.CircuitTransformer
       name: gpt2
       dtype: torch.bfloat16
-      cache_dir: ""
+      api_toklen: 'please put hf token here'
       generate:
         max_length: 100
         num_beams: 5
@@ -49,9 +49,8 @@ action_config:
     lambda_complete_init: 1.0
     min_times_lambda_sparse: 1.
     max_times_lambda_sparse: 1000.
-
-    train_epochs: 100,
-    n_epoch_warmup_lambda_sparse: 500,
+    train_epochs: 100
+    n_epoch_warmup_lambda_sparse: 500
     n_epoch_cooldown_lambda_sparse: 1
 
   task_cfg:
