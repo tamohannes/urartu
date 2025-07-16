@@ -10,9 +10,8 @@ action_config:
     model:
       type:
         _target_: urartu.models.disco_gp.circuit_lm.CircuitTransformer
-      name: gpt2
+      name: "gpt2"
       dtype: torch.bfloat16
-      api_toklen: 'please put hf token here'
       generate:
         max_length: 100
         num_beams: 5
