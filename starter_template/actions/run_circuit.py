@@ -20,7 +20,7 @@ class RunCircuit(Action):
         super().__init__(cfg, aim_run)
 
     def setup_config(self):
-        model_cfg = Config.from_tl('gpt2', dtype=torch.bfloat16, cache_dir=self.cfg.get("cache_dir"), use_auth_token=self.cfg.get("api_token"))
+        model_cfg = Config.from_tl(self.cfg.get("name"), dtype=self.cfg.get("dtype"), use_auth_token=self.cfg.get("api_token"))
         weight_cfg = Config(**self.cfg.action_config.weight_hparams)
         edge_cfg = Config(**self.cfg.action_config.edge_hparams)
         task_cfg = Config(**self.cfg.action_config.task_cfg)
