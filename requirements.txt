@@ -5,6 +5,10 @@ submitit
 aim
 torch
 datasets
-transformers
+#transformers
 evaluate
 accelerate
+# extend 
+transformer_lens
+notebook
+nltk

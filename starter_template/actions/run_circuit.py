@@ -1,26 +1,23 @@
-""" import os
-os.environ["HF_HOME"] = "/mnt/beegfs/work/truong/urartu/hf_cache" """
 from aim import Run, Text
 from omegaconf import DictConfig
 from tqdm import tqdm
+from urartu.utils.dtype import eval_dtype
 
 from urartu.common.action import Action
 from urartu.common.dataset import Dataset
 from urartu.common.model import Model
 
 import gc
-
-import torch
 from disco_gp.circuit_lm import CircuitTransformer
 from disco_gp.configs import Config
-from pathlib import Path
 
 class RunCircuit(Action):
     def _init_(self, cfg: DictConfig, aim_run: Run) -> None:
         super().__init__(cfg, aim_run)
 
     def setup_config(self):
-        model_cfg = Config.from_tl(self.cfg.get("name"), dtype=self.cfg.get("dtype"), use_auth_token=self.cfg.get("api_token"))
+        model_cfg = Config.from_tl(self.cfg.action_config.task.model.name, dtype=eval_dtype(self.cfg.action_config.task.model.dtype))
+        weight_cfg = Config(**self.cfg.action_config.weight_hparams)
         weight_cfg = Config(**self.cfg.action_config.weight_hparams)
         edge_cfg = Config(**self.cfg.action_config.edge_hparams)
         task_cfg = Config(**self.cfg.action_config.task_cfg)
