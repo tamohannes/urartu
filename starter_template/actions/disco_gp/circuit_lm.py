@@ -640,14 +640,16 @@ class CircuitTransformer(nn.Module):
         return faith_results
 
     def search_circuit(self, modes='we'):
+        result = {}
         if 'w' in modes:
-            self.run_prune(mode='w')
+            result = self.run_prune(mode='w')
 
         gc.collect()
         torch.cuda.empty_cache()
 
         if 'e' in modes:
-            return self.run_prune(mode='e')
+            result = self.run_prune(mode='e')
+        return result
 
     def run_prune(self, mode):
 
@@ -669,6 +671,8 @@ class CircuitTransformer(nn.Module):
 
         # time.sleep(0.01)
         epoch_loop = tqdm(range(hparams.train_epochs), desc='Number of Epochs', leave=True, dynamic_ncols=True)
+
+        list_result = []
 
         for i, epoch in enumerate(epoch_loop):
             lambda_sparse = schedule_epoch_lambda(
@@ -729,6 +733,7 @@ class CircuitTransformer(nn.Module):
                 comp = self.evaluate(reverse=True)
                 results = self.evaluate()
                 results['comp'] = comp['acc']
+                list_result.append(results)
                 pprint(results)
 
         weight_mask = self.mask_logits_dict_weight
@@ -746,3 +751,4 @@ class CircuitTransformer(nn.Module):
         del optimizer
         gc.collect()
         torch.cuda.empty_cache()
+        return list_result
