@@ -1,4 +1,5 @@
 import json
+import os
 from argparse import Namespace
 
 from .ioi_dataset import IOIGeneratorDataset
@@ -10,10 +11,14 @@ from torch.utils.data import DataLoader
 PARAREL_RELS = ['P103', 'P127', 'P136', 'P138', 'P140', 'P159', 'P176', 'P19', 'P20', 'P264', 'P279', 'P30', 'P364', 'P37', 'P407', 'P413', 'P449', 'P495', 'P740', 'P1376', 'P36']
 
 def setup_task(disco_gp):
+    data_dict = {}
     if disco_gp.cfg.task_type == 'ioi':
-        return setup_ioi(disco_gp)
+        data_dict = setup_ioi_dataset(disco_gp.cfg, disco_gp.tokenizer)
+        #return setup_ioi(disco_gp.cfg, disco_gp.tokenizer)
     elif disco_gp.cfg.task_type == 'blimp':
-        return setup_blimp(disco_gp)
+        data_dict = setup_blimp_dataset(disco_gp.cfg, disco_gp.tokenizer)
+        #return setup_blimp(disco_gp.cfg, disco_gp.tokenizer)
+    return get_dataloader(disco_gp.cfg, data_dict)
 
 def setup_pararel(disco_gp):
     task = disco_gp.cfg.task
@@ -38,9 +43,8 @@ def setup_pararel(disco_gp):
                 ds_dict['prompt'].append(prompt)
                 ds_dict['answer'].append(target)
 
-
-def setup_blimp(disco_gp):
-    task = disco_gp.cfg.task
+def setup_blimp_dataset(cfg, tokenizer):
+    task = cfg.task
     prompts, targets, targets_good, targets_bad = [], [], [], []
 
     blimp_ds = load_dataset('blimp', task)
@@ -71,7 +75,7 @@ def setup_blimp(disco_gp):
     data_dict['prompt'] = prompts
     data_dict['targets'] = targets
 
-    tokenized = disco_gp.tokenizer(prompts, return_tensors='pt', padding=True)
+    tokenized = tokenizer(prompts, return_tensors='pt', padding=True)
     data_dict['input_ids'] = tokenized['input_ids']
     data_dict['seq_lens'] = tokenized['attention_mask'].sum(-1)
 
@@ -80,13 +84,30 @@ def setup_blimp(disco_gp):
 
     data_dict['target good'] = [
         token_ids[first_token_idx] for token_ids in
-        disco_gp.tokenizer(targets_good, add_special_tokens=False)['input_ids']
+        tokenizer(targets_good, add_special_tokens=False)['input_ids']
     ]
     data_dict['target bad'] = [
         token_ids[first_token_idx] for token_ids in
-        disco_gp.tokenizer(targets_bad, add_special_tokens=False)['input_ids']
+        tokenizer(targets_bad, add_special_tokens=False)['input_ids']
     ]
+    return data_dict
 
+def get_dataloader(cfg, data_dict):
+    ds = Dataset.from_dict(data_dict).train_test_split(0.3).with_format('torch')
+    train_dl = DataLoader(
+        ds['train'],
+        batch_size=cfg.batch_size,
+    )
+    eval_dl = DataLoader(
+        ds['test'],
+        batch_size=cfg.batch_size,
+        shuffle=False,
+    )
+    return Namespace(train=train_dl, eval=eval_dl)
+
+
+def setup_blimp(cfg, tokenizer):
+    data_dict = setup_blimp_dataset(cfg, tokenizer)
     ds = Dataset.from_dict(data_dict).train_test_split(0.3).with_format('torch')
 
     # data_dict['full_model_target_log_probs'] = full_model_target_log_probs
@@ -94,35 +115,35 @@ def setup_blimp(disco_gp):
 
     train_dl = DataLoader(
         ds['train'],
-        batch_size=disco_gp.cfg.batch_size,
+        batch_size=cfg.batch_size,
     )
     eval_dl = DataLoader(
         ds['test'],
-        batch_size=disco_gp.cfg.batch_size,
+        batch_size=cfg.batch_size,
         shuffle=False,
     )
 
     return Namespace(train=train_dl, eval=eval_dl)
 
 
-def setup_ioi(disco_gp):
-    ioi_prompts = IOIGeneratorDataset(prompt_type="ABBA",
-        N=disco_gp.cfg.n_ioi_data, tokenizer=disco_gp.tokenizer).ioi_prompts
-    ds = setup_ioi_dataset(ioi_prompts, disco_gp).train_test_split(0.3).with_format('torch')
-
+def setup_ioi(cfg, tokenizer):
+    data_dict = setup_ioi_dataset(cfg, tokenizer)
+    ds = Dataset.from_dict(data_dict).train_test_split(0.3).with_format('torch')
     train_dl = DataLoader(
         ds['train'],
-        batch_size=disco_gp.cfg.batch_size,
+        batch_size=cfg.batch_size,
     )
     eval_dl = DataLoader(
         ds['test'],
-        batch_size=disco_gp.cfg.batch_size,
+        batch_size=cfg.batch_size,
         shuffle=False,
     )
 
     return Namespace(train=train_dl, eval=eval_dl)
 
-def setup_ioi_dataset(ioi_prompts, disco_gp):
+def setup_ioi_dataset(cfg, tokenizer):
+    ioi_prompts = IOIGeneratorDataset(prompt_type="ABBA",
+        N=cfg.n_ioi_data, tokenizer=tokenizer).ioi_prompts
     prompts, targets, io_list, s_list = [], [], [], []
     for item in ioi_prompts:
         prompt_full = item['text']
@@ -137,13 +158,20 @@ def setup_ioi_dataset(ioi_prompts, disco_gp):
     data_dict['prompt'] = prompts
     data_dict['targets'] = targets
 
-    tokenized = disco_gp.tokenizer(prompts, return_tensors='pt', padding=True)
+    tokenized = tokenizer(prompts, return_tensors='pt', padding=True)
     data_dict['input_ids'] = tokenized['input_ids']
     data_dict['seq_lens'] = tokenized['attention_mask'].sum(-1)
 
-    data_dict['target good'] = [token_ids[0] for token_ids in disco_gp.tokenizer(io_list)['input_ids']]
-    data_dict['target bad'] = [token_ids[0] for token_ids in disco_gp.tokenizer(s_list)['input_ids']]
+    data_dict['target good'] = [token_ids[0] for token_ids in tokenizer(io_list)['input_ids']]
+    data_dict['target bad'] = [token_ids[0] for token_ids in tokenizer(s_list)['input_ids']]
 
-    ds = Dataset.from_dict(data_dict)
+    return data_dict
 
-    return ds
+
+def get_data_as_dict(cfg, tokenizer):
+    data_dict = {}
+    if cfg.task_type == 'ioi':
+        data_dict = setup_ioi_dataset(cfg, tokenizer)
+    elif cfg.task_type == 'blimp':
+        data_dict = setup_blimp_dataset(cfg, tokenizer)
+    return data_dict

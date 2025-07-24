@@ -5,14 +5,16 @@ from urartu.utils.dtype import eval_dtype
 import pandas as pd
 from datetime import datetime
 from sklearn.preprocessing import MinMaxScaler
+from argparse import Namespace
 
 from urartu.common.action import Action
 from urartu.common.dataset import Dataset
-from urartu.common.model import Model
+from urartu.intervention.masking import CircuitTransformer as NewModel
 from urartu.common.configs import Config
 
-import gc
+from disco_gp.data import get_data_as_dict
 from disco_gp.circuit_lm import CircuitTransformer
+from transformers import AutoTokenizer
 
 
 class RunCircuit(Action):
@@ -22,9 +24,8 @@ class RunCircuit(Action):
     def setup_config(self):
         model_cfg = Config.from_tl(self.cfg.action_config.task.model.name, dtype=eval_dtype(self.cfg.action_config.task.model.dtype))
         weight_cfg = Config(**self.cfg.action_config.weight_hparams)
-        weight_cfg = Config(**self.cfg.action_config.weight_hparams)
         edge_cfg = Config(**self.cfg.action_config.edge_hparams)
-        task_cfg = Config(**self.cfg.action_config.task_cfg)
+        task_cfg = Config(**self.cfg.action_config.task.dataset)
         exp_cfg = Config(**self.cfg.action_config.exp_cfg)
         circuit_cfg = Config.from_configs(
             weight = weight_cfg,
@@ -39,7 +40,7 @@ class RunCircuit(Action):
         df = pd.DataFrame(epoch_results)
         df.insert(0, 'epoch', range(0, len(df)))
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        df.to_excel(f'/mnt/beegfs/work/truong/urartu/train_results_{timestamp}.xlsx', index=False)
+        df.to_excel(f'/mnt/beegfs/work/truong/urartu/train_results/train_results_{timestamp}.xlsx', index=False)
         scaler = MinMaxScaler()
         normalized = pd.DataFrame(scaler.fit_transform(df[['acc', 'edge_density', 'weight_density']]),
                           columns=['acc', 'edge_density', 'weight_density'])
@@ -55,15 +56,47 @@ class RunCircuit(Action):
         best_result = df.iloc[best_epoch]
         print(best_result)
 
+    def tokenizer(self):
+        tokenizer = AutoTokenizer.from_pretrained('gpt2')
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        return tokenizer
+    
+    def run_circuit(self):
+        circuit_cfg = self.setup_config()
+        print(circuit_cfg.weight)
+        print(circuit_cfg.edge)
+        model = CircuitTransformer.from_pretrained(circuit_cfg)
+        model.prepare_origin_output(model.dls.eval)
+        result = model.evaluate()
+        print('Result after model evaluate:')
+        print(result)
+        epoch_results = model.search_circuit()
+        self.choose_best_model(epoch_results)
+
+    def test_dataset(self):
+        circuit_cfg = self.setup_config()
+        tokenizer = self.tokenizer()
+        data_dict = get_data_as_dict(self.task_cfg.dataset, tokenizer)
+        dataset = Dataset.get_dataset(self.task_cfg.dataset, dataset=data_dict)
+        dataloaders = dataset.get_dataloader(self.task_cfg.dataset, tokenizer, return_attrs=True)
+        train_dl = dataloaders['train']
+        eval_dl = dataloaders['test']
+        dls = Namespace(train=train_dl, eval=eval_dl)
+        model = NewModel.from_pretrained(circuit_cfg, tokenizer, dls)
+        model.prepare_origin_output(model.dls.eval)
+        result = model.evaluate()
+        print('Result after model evaluate:')
+        print(result)
+        epoch_results = model.search_circuit()
+        self.choose_best_model(epoch_results)
 
 
     def main(self):
-        circuit_cfg = self.setup_config()
-        model = CircuitTransformer.from_pretrained(circuit_cfg)
-        model.prepare_origin_output(model.dls.eval)
-        epoch_results = model.search_circuit()
-        self.choose_best_model(epoch_results)
+        self.run_circuit()
+        
 
 def main(cfg: DictConfig, aim_run: Run):
     action = RunCircuit(cfg, aim_run)
     action.main()
+

@@ -1,9 +1,8 @@
-from typing import Dict, List, NamedTuple, Optional, Tuple, Union, cast, overload
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union, cast, overload
 from typing_extensions import Literal
+from urartu.common.intervention import Intervention
 
-import os
 import gc
-from pathlib import Path
 
 from tqdm.auto import tqdm
 from pprint import pprint
@@ -19,7 +18,7 @@ import torch.nn.functional as F
 import einops
 from fancy_einsum import einsum
 
-from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerBase
+
 from transformer_lens.components import (
     Embed,
     PosEmbed,
@@ -35,7 +34,7 @@ from transformer_lens.components import (
 )
 from transformer_lens import HookedTransformer
 
-from .data import setup_task
+#from .data import setup_task
 from .evaluation import compute_complete_loss, compute_faith_loss
 from .utils import schedule_epoch_lambda
 from .configs import Config
@@ -269,7 +268,9 @@ class TransformerBlock(nn.Module):
 
         return residual
 
-class CircuitTransformer(nn.Module):
+
+class CircuitTransformer(Intervention):
+
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
@@ -457,7 +458,6 @@ class CircuitTransformer(nn.Module):
     def edge_sparseness_loss(self):
         sparse_loss = 0
         for n, mask_logits in self.mask_logits_dict_edge.items():
-            # print(n)
             sparse_loss += F.sigmoid(mask_logits).sum()
         return sparse_loss / self.N_edge
 
@@ -531,7 +531,7 @@ class CircuitTransformer(nn.Module):
         self.load_state_dict(mask_logits_dict_edge, strict=False)
 
     @classmethod
-    def from_pretrained(cls, cfg):
+    def from_pretrained(cls, cfg, tokenizer, dataloader):
         model = cls(cfg)
         state_dict = HookedTransformer.from_pretrained(cfg.model_name, **{'force_download': True}).state_dict()
         model.load_state_dict(state_dict, strict=False)
@@ -541,14 +541,14 @@ class CircuitTransformer(nn.Module):
         del state_dict
         torch.cuda.empty_cache()
 
-        tokenizer = AutoTokenizer.from_pretrained(cfg.model_name)
+        """ tokenizer = AutoTokenizer.from_pretrained(cfg.model_name)
         if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
+            tokenizer.pad_token = tokenizer.eos_token """
 
         model = model.to(model.cfg.device, dtype=model.cfg.dtype)
 
         model.tokenizer = tokenizer
-        model.dls = setup_task(model)
+        model.dls = dataloader
 
         return model
 
@@ -641,20 +641,20 @@ class CircuitTransformer(nn.Module):
 
         return faith_results
 
-    def search_circuit(self, modes='we'):
-        result = []
+    def intervene(self):
+        modes='we'
+        result = {}
         if 'w' in modes:
-            result = result + self.run_prune(mode='w')
+            result = self.run_prune(mode='w')
 
         gc.collect()
         torch.cuda.empty_cache()
 
         if 'e' in modes:
-            result = result + self.run_prune(mode='e')
+            result = self.run_prune(mode='e')
         return result
 
     def run_prune(self, mode):
-
         if mode == 'w':
             # weight pruning
             mask_logits_dict = self.mask_logits_dict_weight
@@ -754,4 +754,3 @@ class CircuitTransformer(nn.Module):
         gc.collect()
         torch.cuda.empty_cache()
         return list_result
-

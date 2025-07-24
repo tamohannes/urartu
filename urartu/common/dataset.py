@@ -22,7 +22,7 @@ class Dataset:
         get_dataloader: Creates a DataLoader instance configured according to specified parameters and optional tokenizer adjustments.
     """
 
-    def __init__(self, cfg: List[Dict[str, Any]]) -> None:
+    def __init__(self, cfg: List[Dict[str, Any]], dataset = None) -> None:
         """
         Initializes the Dataset object with the necessary configuration.
 
@@ -33,11 +33,11 @@ class Dataset:
         which should be implemented by subclasses to specify how the dataset is instantiated.
         """
         self.cfg = cfg
-        self.dataset = None
+        self.dataset = dataset
         self._get_dataset()
 
     @staticmethod
-    def get_dataset(cfg):
+    def get_dataset(cfg, dataset = None):
         """
         Static method to instantiate a dataset using the configuration provided.
 
@@ -50,7 +50,7 @@ class Dataset:
         This method utilizes Hydra's instantiation utility to create a dataset object based on a type
         specification and additional parameters provided in the configuration dictionary.
         """
-        return hydra.utils.instantiate(cfg.type, cfg)
+        return hydra.utils.instantiate(cfg.type, cfg, dataset)
 
     def _get_dataset(self):
         """
@@ -114,3 +114,4 @@ class Dataset:
             )
             for split_name in self.dataset.keys()
         }
+

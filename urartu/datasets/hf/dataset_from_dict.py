@@ -15,7 +15,7 @@ class DatasetFromDict(Dataset):
         _get_dataset: Overrides the base class method to instantiate the dataset from a dictionary provided in the configuration.
     """
 
-    def __init__(self, cfg: List[Dict[str, Any]]) -> None:
+    def __init__(self, cfg: List[Dict[str, Any]], dataset = None) -> None:
         """
         Initializes the DatasetFromDict object with configuration details.
 
@@ -25,7 +25,7 @@ class DatasetFromDict(Dataset):
 
         The constructor initializes the DatasetFromDict instance by calling the constructor of the base Dataset class.
         """
-        super().__init__(cfg)
+        super().__init__(cfg, dataset)
 
     def _get_dataset(self):
         """
@@ -38,7 +38,9 @@ class DatasetFromDict(Dataset):
         'datasets.Dataset.from_dict()' method to convert the dictionary into a dataset. The resulting dataset is then
         stored in the `self.dataset` attribute of the class.
         """
-        if "data" not in self.cfg:
-            raise TypeError("Argument 'data' is missing")
-
-        self.dataset = HFDataset.from_dict(dict(self.cfg.data))
+        if self.dataset == None:
+            if "data" not in self.cfg:
+                raise TypeError("Argument 'data' is missing")
+            self.dataset = HFDataset.from_dict(dict(self.cfg.data))
+        else:
+            self.dataset = HFDataset.from_dict(self.dataset).train_test_split(self.cfg.train_test_split).with_format('torch')
