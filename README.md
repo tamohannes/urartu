@@ -33,7 +33,7 @@ Welcome to Urartu, the revolutionary framework that transforms how you build mac
 
 With a `.yaml` file-based configuration system and seamless `slurm` job submission capabilities on clusters, Urartu removes the technical hassle so you can focus on building impactful ML workflows! 🚀
 
-![urartu_schema drawio](https://github.com/tamohannes/urartu/assets/23078323/9d747c2d-9856-4dbe-85ab-74a595f86603)
+<img width="2570" height="1053" alt="urartu_schema" src="https://github.com/user-attachments/assets/4120028b-d982-4c36-89de-14d346954201" />
 
 # **Installation**
 
@@ -72,10 +72,10 @@ urartu --help
 A **Pipeline** is a sequence of **Actions** that automatically manage data flow, caching, and execution order. Each Action is a self-contained component with built-in caching that can be chained together to create sophisticated ML workflows.
 
 ```
-┌─────────────┐    📄 outputs    ┌─────────────┐    📄 outputs    ┌─────────────┐
+┌─────────────┐    📄 outputs   ┌─────────────┐    📄 outputs    ┌─────────────┐
 │   Action 1  │ ──────────────▶ │   Action 2  │ ──────────────▶ │   Action 3  │
 │ Data Prep   │                 │ Model Train │                 │ Evaluation  │
-│ 💾 cached   │                 │ 💾 cached   │                 │ 💾 cached   │
+│ 💾 cached   │                 │ 💾 cached   │                  │ 💾 cached   │
 └─────────────┘                 └─────────────┘                 └─────────────┘
 ```
 
