@@ -1,4 +1,3 @@
-action_config:
+action:
   experiment_name: ???
   device: ???
-  tasks: ???

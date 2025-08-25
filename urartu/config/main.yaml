@@ -4,10 +4,13 @@ defaults:
   - slurm: default_slurm
   - aim: default_aim
 
-action_name: ???
+action_config: ???
 debug: ???
 
-run_dir: ".runs/${action_name}/${now:%Y-%m-%d}_${now:%H-%M-%S}"
+# Optional pipeline configuration (only used by pipeline actions)
+pipeline_config: {}
+
+run_dir: ".runs/${action_config}/${now:%Y-%m-%d}_${now:%H-%M-%S}"
 
 hydra:
   sweep:

@@ -107,6 +107,51 @@ class ModelForCausalLM(Model):
             output = self.tokenizer.decode(
                 output_tokenized["sequences"][0], skip_special_tokens=True
             )
-            return output, output_tokenized["scores"]
+            scores = output_tokenized["scores"]
+            if isinstance(scores, (list, tuple)):
+                # For single generation, scores are per token, stack them to have shape (num_tokens, vocab_size)
+                scores = torch.stack(scores, dim=0)
+            return output, scores
         else:
             return self.tokenizer.decode(output_tokenized[0], skip_special_tokens=True)
+
+    def generate_batch(self, prompts: list[str], generate_cfg=None):
+        """
+        Generates text for a batch of prompts.
+        """
+        if not generate_cfg:
+            generate_cfg = self.cfg.get("generate")
+        self.model.eval()
+
+        # Tokenize the batch of prompts
+        self.tokenizer.padding_side = "left" # For decoder-only models
+        prompt_tokenized = self.tokenizer(
+            prompts, return_tensors="pt", padding=True, truncation=True
+        )
+        prompt_tensor = prompt_tokenized["input_ids"].to(self.model.device)
+        attention_mask = prompt_tokenized["attention_mask"].to(self.model.device)
+        
+        with torch.no_grad():
+            output_tokenized = self.model.generate(
+                input_ids=prompt_tensor, attention_mask=attention_mask, **generate_cfg
+            )
+        
+        if "output_scores" in generate_cfg:
+            # Decode all sequences in the batch
+            outputs = self.tokenizer.batch_decode(
+                output_tokenized.sequences, skip_special_tokens=True
+            )
+            
+            # Scores is a tuple of tensors (one for each generated token). 
+            # Each tensor is of shape (batch_size, vocab_size).
+            # We stack them to get a tensor of shape (num_generated_tokens, batch_size, vocab_size).
+            scores_stacked = torch.stack(output_tokenized.scores, dim=0)
+            
+            # We want to return a list of score tensors, one for each sample in the batch.
+            # So we transpose to (batch_size, num_generated_tokens, vocab_size) and split.
+            scores_per_sample = list(scores_stacked.transpose(0, 1))
+
+            return outputs, scores_per_sample
+        else:
+            # Just decode the output sequences
+            return self.tokenizer.batch_decode(output_tokenized, skip_special_tokens=True)

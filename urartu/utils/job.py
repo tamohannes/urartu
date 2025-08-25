@@ -127,9 +127,36 @@ class ResumableJob:
 
     def __call__(self):
         """
-        Executes the job action specified in the configuration. Similar to the Slurm version,
-        but without managing Slurm-specific environment settings.
+        Executes the job action specified in the configuration. 
+        Prefers action classes with run() method over module-level main() function.
         """
         sys.path.append(f"{self.module}/actions")
-        action = import_module(self.action_name)
-        action.main(cfg=self.cfg, aim_run=self.aim_run)
+        action_module = import_module(self.action_name)
+        
+        # Try to find action class - look for classes that inherit from Action
+        from urartu.common.action import Action
+        action_class = None
+        
+        for attr_name in dir(action_module):
+            attr = getattr(action_module, attr_name)
+            if (isinstance(attr, type) and 
+                issubclass(attr, Action) and 
+                attr != Action):
+                action_class = attr
+                break
+        
+        if action_class:
+            # Use action class with run() method
+            action_instance = action_class(self.cfg, self.aim_run)
+            
+            # Use new caching-enabled run method if available
+            if hasattr(action_instance, 'run_with_cache'):
+                action_instance.run_with_cache()
+            elif hasattr(action_instance, 'run'):
+                action_instance.run()
+            else:
+                # Fallback to legacy main function on module
+                action_module.main(cfg=self.cfg, aim_run=self.aim_run)
+        else:
+            # Fallback to legacy main function on module
+            action_module.main(cfg=self.cfg, aim_run=self.aim_run)
