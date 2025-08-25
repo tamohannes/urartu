@@ -13,6 +13,7 @@ import json
 import hashlib
 import pickle
 import time
+import yaml
 from datetime import datetime
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
@@ -455,38 +456,8 @@ class Pipeline(Action):
             )
         
         # Resolve config overrides to handle any references
-        resolved_config_overrides = self._resolve_value(pipeline_action.config_overrides)
-        
-        # Convert to regular dict for JSON serialization  
-        if hasattr(resolved_config_overrides, 'items'):
-            resolved_config_overrides = OmegaConf.to_container(resolved_config_overrides, resolve=True) if OmegaConf.is_config(resolved_config_overrides) else dict(resolved_config_overrides)
-        
-        # Generate cache key
-        cache_key = self._generate_cache_key(pipeline_action, resolved_config_overrides)
-        # Convert to container for JSON serialization
-        resolved_config_dict = self._make_serializable(resolved_config_overrides)
-        config_hash = hashlib.sha256(json.dumps(resolved_config_dict, sort_keys=True).encode()).hexdigest()[:8]
-        
-        logger.info(f"Cache key for action '{pipeline_action.name}': {cache_key}")
-        logger.info(f"Config hash for action '{pipeline_action.name}': {config_hash}")
-        
-        # Debug: Log existing cache files to help identify why cache is missed
-        cache_files = list(self.cache_dir.glob("*.json")) if self.cache_dir.exists() else []
-        if cache_files:
-            logger.info(f"Found {len(cache_files)} existing cache files:")
-            for cache_file in cache_files:
-                if cache_file.stem.startswith(pipeline_action.action_name):
-                    logger.info(f"  📁 {cache_file.name}")
-        
-        # Try to load from cache
-        cache_entry = self._load_from_cache(cache_key)
-        if cache_entry is not None:
-            logger.info(f"✅ Using cached output for action '{pipeline_action.name}' (cache hit!)")
-            self.aim_run[f"pipeline_action_{pipeline_action.name}_cache_hit"] = True
-            return cache_entry.action_output
-        else:
-            logger.info(f"❌ No cache found for action '{pipeline_action.name}' - will execute and cache")
-            logger.info(f"🔍 Looking for cache file: {self._get_cache_path(cache_key)}")
+        context = {"action_outputs": self.action_outputs}
+        resolved_config_overrides = self._resolve_value(pipeline_action.config_overrides, context)
         
         # Import the action module
         try:
@@ -601,7 +572,7 @@ class Pipeline(Action):
             # Use action class with run() method
             action_instance = action_class(action_cfg, self.aim_run)
             
-            # Run the action with caching support
+            # Run the action with its own caching support
             if hasattr(action_instance, 'run_with_cache'):
                 action_instance.run_with_cache()
             elif hasattr(action_instance, 'run'):
@@ -613,6 +584,11 @@ class Pipeline(Action):
             
             # Extract outputs
             outputs = self._extract_outputs(pipeline_action, action_instance)
+            
+            # Ensure we have outputs even from cached actions
+            if not outputs and hasattr(action_instance, '_cached_outputs') and action_instance._cached_outputs:
+                outputs = action_instance._cached_outputs
+                logger.info(f"📤 Using cached outputs for pipeline action {pipeline_action.name}: {list(outputs.keys()) if outputs else 'None'}")
         elif hasattr(action_module, 'main'):
             # Fallback to module-level main function
             action_module.main(cfg=action_cfg, aim_run=self.aim_run)
@@ -630,11 +606,6 @@ class Pipeline(Action):
         # Track outputs in Aim
         if outputs:
             self.aim_run[f"pipeline_action_{pipeline_action.name}_outputs"] = outputs
-        
-        # Save to cache
-        logger.info(f"💾 Saving action '{pipeline_action.name}' to cache with key: {cache_key}")
-        self._save_to_cache(cache_key, action_output, config_hash)
-        self.aim_run[f"pipeline_action_{pipeline_action.name}_cache_hit"] = False
         
         # Clean up memory after action completes
         if action_instance is not None and hasattr(action_instance, 'cleanup_memory'):
@@ -720,6 +691,9 @@ class Pipeline(Action):
         """
         Generate a unique cache key for an action based on its configuration.
         
+        For cross-pipeline cache sharing, we focus on the action's core configuration
+        and ignore pipeline context when the action doesn't depend on previous outputs.
+        
         Args:
             pipeline_action: The pipeline action
             resolved_config: The resolved configuration (with references resolved)
@@ -727,18 +701,36 @@ class Pipeline(Action):
         Returns:
             A unique cache key string
         """
-        # Create a dictionary of all relevant factors
-        # Ensure everything is JSON serializable
-        key_factors = {
-            'action_name': pipeline_action.action_name,
-            'config_overrides': self._make_serializable(resolved_config),
-            'outputs_to_track': self._make_serializable(pipeline_action.outputs_to_track),
-            # Include previous action outputs that might affect this action
-            'previous_outputs': {
-                name: self._make_serializable(output.outputs) 
-                for name, output in self.action_outputs.items()
+        # Import the cache ignore keys from action module for consistency
+        from .action import CACHE_IGNORE_KEYS
+        
+        # Filter config to enable cross-pipeline cache sharing
+        # Remove pipeline-level keys that don't affect action outputs
+        filtered_config = {k: v for k, v in resolved_config.items() if k not in CACHE_IGNORE_KEYS}
+        
+        # For cross-pipeline cache sharing: if this action has no previous outputs (first action),
+        # generate a cache key based only on the action config, not pipeline context
+        has_previous_outputs = bool(self.action_outputs)
+        has_depends_on = 'depends_on' in resolved_config and resolved_config['depends_on']
+        
+        if not has_previous_outputs and not has_depends_on:
+            # First action with no dependencies - use simplified cache key for cross-pipeline sharing
+            key_factors = {
+                'action_name': pipeline_action.action_name,
+                'config': self._make_serializable(filtered_config),
             }
-        }
+        else:
+            # Action depends on previous outputs - include pipeline context
+            key_factors = {
+                'action_name': pipeline_action.action_name,
+                'config_overrides': self._make_serializable(filtered_config),
+                'outputs_to_track': self._make_serializable(pipeline_action.outputs_to_track),
+                # Include previous action outputs that might affect this action
+                'previous_outputs': {
+                    name: self._make_serializable(output.outputs) 
+                    for name, output in self.action_outputs.items()
+                }
+            }
         
         # Convert to JSON for consistent ordering
         key_string = json.dumps(key_factors, sort_keys=True)
@@ -773,16 +765,34 @@ class Pipeline(Action):
                 pickle.dump(cache_entry, f)
                 
             # Also save a human-readable metadata file
-            metadata_path = cache_path.with_suffix('.json')
+            metadata_path = cache_path.with_suffix('.yaml')
+            
+            # Get the full resolved config for this action
+            pipeline_action = None
+            for action in self.actions:
+                if action.action_name == action_output.action_name:
+                    pipeline_action = action
+                    break
+            
+            # Build full config including pipeline context
+            full_config = {}
+            if pipeline_action:
+                # Include the resolved config overrides
+                resolved_config_overrides = self._resolve_value(pipeline_action.config_overrides)
+                if hasattr(resolved_config_overrides, 'items'):
+                    resolved_config_overrides = OmegaConf.to_container(resolved_config_overrides, resolve=True) if OmegaConf.is_config(resolved_config_overrides) else dict(resolved_config_overrides)
+                full_config = resolved_config_overrides
+            
             metadata = {
                 'cache_key': cache_key,
                 'action_name': action_output.action_name,
                 'timestamp': datetime.fromtimestamp(cache_entry.timestamp).isoformat(),
                 'config_hash': config_hash,
-                'outputs_keys': list(action_output.outputs.keys())
+                'outputs_keys': list(action_output.outputs.keys()),
+                'full_config': full_config  # Add full config content
             }
             with open(metadata_path, 'w') as f:
-                json.dump(metadata, f, indent=2)
+                yaml.dump(metadata, f, default_flow_style=False, indent=2, sort_keys=False)
                 
             logger.info(f"Cached output for action '{action_output.name}' with key {cache_key}")
             
@@ -841,3 +851,15 @@ class Pipeline(Action):
         """Convenience method that calls initialize() and run()."""
         self.initialize()
         self.run()
+    
+    def get_outputs(self) -> Dict[str, Any]:
+        """Return the combined outputs from all pipeline actions."""
+        # Return the combined outputs from all executed actions
+        return {
+            "actions": {name: output.outputs for name, output in self.action_outputs.items()},
+            "pipeline_metadata": {
+                "total_actions": len(self.actions),
+                "successful_actions": len([o for o in self.action_outputs.values() if not o.metadata.get("skipped", False)]),
+                "pipeline_name": self.__class__.__name__
+            }
+        }

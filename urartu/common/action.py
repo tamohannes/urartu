@@ -10,12 +10,47 @@ import time
 import logging
 import gc
 import sys
+import yaml
 from datetime import datetime
 
 from .device import Device
 from urartu.utils.hash import dict_to_8char_hash
 
 logger = logging.getLogger(__name__)
+
+
+# Keys in the action configuration that do NOT influence the produced outputs
+# and therefore should be ignored when building cache keys. This enables cross-pipeline
+# cache sharing when the same action has identical core configs but different pipeline contexts.
+CACHE_IGNORE_KEYS = {
+    # Cache-related settings
+    "cache_enabled",
+    "force_rerun", 
+    "cache_max_age_hours",
+    "cache_max_age",
+    
+    # Memory management settings (don't affect outputs)
+    "memory_management",
+    "auto_cleanup",
+    "force_cpu_offload", 
+    "aggressive_gc",
+    
+    # Pipeline-level settings that get merged but don't affect action outputs
+    "experiment_name",
+    "debug",
+    
+    # Dependency declarations (these are resolved before action runs)
+    "depends_on",
+    
+    # Pipeline metadata
+    "pipeline_id",
+    "pipeline_name",
+    
+    # Runtime/execution settings that don't affect outputs
+    "action_name",  # This is metadata, not part of action logic
+    "run_dir",      # Runtime directory, doesn't affect outputs
+    "device",       # Device doesn't affect outputs, just where computation happens
+}
 
 
 class Action(ABC):
@@ -104,7 +139,9 @@ class Action(ABC):
         if runs_dir is None:
             runs_dir = Path('.') / '.runs'
         
-        self.cache_dir = runs_dir / 'action_cache'
+        # Use shared pipeline_cache directory for cross-pipeline cache sharing
+        # This allows actions to share cache entries across different pipelines
+        self.cache_dir = runs_dir / 'pipeline_cache'
         self._cached_outputs = None
         self._cache_key = None
     
@@ -122,31 +159,97 @@ class Action(ABC):
     
     def _generate_cache_key(self) -> str:
         """Generate a unique cache key based on action configuration."""
+        # For cross-pipeline cache sharing, always use action_name from config
+        # This ensures the same action (e.g., _2_sample_constructor) with same config 
+        # shares cache across standalone, pipeline A, pipeline B, etc.
+        action_name = getattr(self.cfg, 'action_name', None) or self.__class__.__name__
+        
+        logger.info(f"🔑 Action name determination:")
+        logger.info(f"   cfg.action_name: {getattr(self.cfg, 'action_name', None)}")
+        logger.info(f"   class name: {self.__class__.__name__}")
+        logger.info(f"   final action_name: {action_name}")
+        
+        serializable_config = self._get_serializable_config()
+        
         # Include action name and full configuration in cache key
         key_factors = {
-            'action_name': self.__class__.__name__,
-            'config': self._get_serializable_config()
+            'action_name': action_name,
+            'config': serializable_config
         }
+        
+        # Debug logging to understand cache key generation
+        logger.info(f"🔑 Cache key generation for {action_name}:")
+        logger.info(f"   Config keys: {list(serializable_config.keys()) if isinstance(serializable_config, dict) else 'N/A'}")
+        if isinstance(serializable_config, dict) and 'device' in serializable_config:
+            logger.info(f"   Config device: {serializable_config['device']}")
         
         # Convert to JSON for consistent ordering
         key_string = json.dumps(key_factors, sort_keys=True)
+        logger.info(f"   Key string length: {len(key_string)}")
+        logger.info(f"   Key string (first 200 chars): {key_string[:200]}...")
         
         # Generate hash
         cache_key = hashlib.sha256(key_string.encode()).hexdigest()[:16]
         
-        return f"{self.__class__.__name__}_{cache_key}"
+        final_cache_key = f"{action_name}_{cache_key}"
+        logger.info(f"   Generated cache key: {final_cache_key}")
+        
+        # For debugging: if this is a different key from existing cache files, show differences
+        if self.cache_dir.exists():
+            existing_files = list(self.cache_dir.glob(f"{action_name}_*.pkl"))
+            if existing_files and not any(final_cache_key in str(f) for f in existing_files):
+                logger.info(f"🔍 Cache key mismatch detected! Generated: {final_cache_key}")
+                logger.info(f"🔍 Existing files: {[f.name for f in existing_files]}")
+                logger.info(f"🔍 Full key string for comparison: {key_string}")
+        
+        return final_cache_key
     
     def _get_serializable_config(self) -> Dict[str, Any]:
         """Get a serializable version of the configuration for caching."""
         try:
             from omegaconf import OmegaConf
             if hasattr(self, 'action_config'):
-                return OmegaConf.to_container(self.action_config, resolve=True)
+                cfg_dict = OmegaConf.to_container(self.action_config, resolve=True)
+                
+                # Debug logging
+                logger.info(f"📋 Config serialization for {self.__class__.__name__}:")
+                logger.info(f"   Original config keys: {sorted(cfg_dict.keys())}")
+                
+                # Show some key config values for debugging
+                if 'device' in cfg_dict:
+                    logger.info(f"   Config device: {cfg_dict['device']}")
+                if 'seed' in cfg_dict:
+                    logger.info(f"   Config seed: {cfg_dict['seed']}")
+                
+                # Remove keys that should not affect caching (enables cross-pipeline cache sharing)
+                filtered_cfg = {k: v for k, v in cfg_dict.items() if k not in CACHE_IGNORE_KEYS}
+                
+                removed_keys = set(cfg_dict.keys()) - set(filtered_cfg.keys())
+                if removed_keys:
+                    logger.info(f"   Removed keys: {sorted(removed_keys)}")
+                logger.info(f"   Final config keys: {sorted(filtered_cfg.keys())}")
+                
+                # Show a sample of the final config for debugging
+                logger.info(f"   Final config sample: {str(filtered_cfg)[:300]}...")
+                
+                return filtered_cfg
             return {}
         except Exception:
             # Fallback to dict conversion
             if hasattr(self, 'action_config') and hasattr(self.action_config, 'items'):
-                return dict(self.action_config)
+                cfg_dict = dict(self.action_config)
+                logger.info(f"📋 Config serialization (fallback) for {self.__class__.__name__}:")
+                logger.info(f"   Original config keys: {sorted(cfg_dict.keys())}")
+                
+                # Remove keys that should not affect caching
+                filtered_cfg = {k: v for k, v in cfg_dict.items() if k not in CACHE_IGNORE_KEYS}
+                
+                removed_keys = set(cfg_dict.keys()) - set(filtered_cfg.keys())
+                if removed_keys:
+                    logger.info(f"   Removed keys: {sorted(removed_keys)}")
+                logger.info(f"   Final config keys: {sorted(filtered_cfg.keys())}")
+                
+                return filtered_cfg
             return {}
     
     def _get_cache_path(self, cache_key: str) -> Path:
@@ -156,26 +259,54 @@ class Action(ABC):
     def _load_from_cache(self) -> Optional[Dict[str, Any]]:
         """Load outputs from cache if available and valid."""
         if not self.cache_enabled or self.force_rerun:
+            logger.info(f"💾 Cache disabled or force_rerun for {self.__class__.__name__} (enabled: {self.cache_enabled}, force_rerun: {self.force_rerun})")
             return None
         
-        cache_key = self._generate_cache_key()
+        # Use stored cache key if available, otherwise generate new one
+        stored_key = getattr(self, '_cache_key', None)
+        if stored_key:
+            cache_key = stored_key
+            logger.info(f"💾 Using stored cache key: {cache_key}")
+        else:
+            cache_key = self._generate_cache_key()
+            logger.info(f"💾 Generated new cache key: {cache_key}")
+        
         cache_path = self._get_cache_path(cache_key)
+        logger.info(f"💾 Looking for cache at: {cache_path}")
+        
+        # Debug: List existing cache files
+        if self.cache_dir.exists():
+            action_name = getattr(self.cfg, 'action_name', None) or self.__class__.__name__
+            existing_files = list(self.cache_dir.glob(f"{action_name}_*.pkl"))
+            logger.info(f"💾 Found {len(existing_files)} existing cache files for {action_name}:")
+            for f in existing_files:
+                logger.info(f"   📁 {f.name}")
         
         if not cache_path.exists():
+            logger.info(f"💾 Cache file not found: {cache_path.name}")
             return None
         
         try:
             with open(cache_path, 'rb') as f:
                 cache_data = pickle.load(f)
             
+            logger.info(f"💾 Loaded cache data from {cache_path.name}")
+            logger.info(f"   Cache timestamp: {cache_data.get('timestamp', 'N/A')}")
+            logger.info(f"   Cache action_name: {cache_data.get('action_name', 'N/A')}")
+            logger.info(f"   Cache config_hash: {cache_data.get('config_hash', 'N/A')}")
+            logger.info(f"   Cache has outputs: {'outputs' in cache_data}")
+            
             # Check if cache is still valid
             if self.cache_max_age is not None:
                 age = time.time() - cache_data['timestamp']
+                logger.info(f"   Cache age: {age:.1f}s, max_age: {self.cache_max_age}s")
                 if age > self.cache_max_age:
-                    logger.info(f"Cache for {self.__class__.__name__} is expired (age: {age:.1f}s)")
+                    logger.info(f"❌ Cache for {self.__class__.__name__} is expired (age: {age:.1f}s)")
                     return None
+            else:
+                logger.info(f"   No cache age limit set")
             
-            logger.info(f"Loading cached outputs for {self.__class__.__name__}")
+            logger.info(f"✅ Loading cached outputs for {self.__class__.__name__} from {cache_path.name}")
             self.aim_run[f"action_{self.__class__.__name__}_cache_hit"] = True
             return cache_data['outputs']
             
@@ -191,13 +322,24 @@ class Action(ABC):
         try:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             
-            cache_key = self._generate_cache_key()
+            # Use stored cache key to ensure consistency with initial lookup
+            stored_key = getattr(self, '_cache_key', None)
+            if stored_key:
+                cache_key = stored_key
+                logger.info(f"💾 Saving with stored cache key: {cache_key}")
+            else:
+                cache_key = self._generate_cache_key()
+                logger.info(f"💾 Saving with new cache key: {cache_key}")
+            
             cache_path = self._get_cache_path(cache_key)
+            
+            # Use the same action name logic as cache key generation for consistency
+            action_name = getattr(self.cfg, 'action_name', None) or self.__class__.__name__
             
             cache_data = {
                 'outputs': outputs,
                 'timestamp': time.time(),
-                'action_name': self.__class__.__name__,
+                'action_name': action_name,
                 'config_hash': hashlib.sha256(json.dumps(self._get_serializable_config(), sort_keys=True).encode()).hexdigest()[:8]
             }
             
@@ -205,16 +347,17 @@ class Action(ABC):
                 pickle.dump(cache_data, f)
             
             # Also save human-readable metadata
-            metadata_path = cache_path.with_suffix('.json')
+            metadata_path = cache_path.with_suffix('.yaml')
             metadata = {
                 'cache_key': cache_key,
-                'action_name': self.__class__.__name__,
+                'action_name': action_name,  # Use the same action name as in cache_data
                 'timestamp': datetime.fromtimestamp(cache_data['timestamp']).isoformat(),
                 'config_hash': cache_data['config_hash'],
-                'output_keys': list(outputs.keys())
+                'output_keys': list(outputs.keys()),
+                'full_config': self._get_serializable_config()  # Add full config content
             }
             with open(metadata_path, 'w') as f:
-                json.dump(metadata, f, indent=2)
+                yaml.dump(metadata, f, default_flow_style=False, indent=2, sort_keys=False)
             
             logger.info(f"Cached outputs for {self.__class__.__name__} with key {cache_key}")
             self.aim_run[f"action_{self.__class__.__name__}_cache_hit"] = False
@@ -229,6 +372,9 @@ class Action(ABC):
         This method should be called instead of run() directly to enable caching.
         It will check cache first, run the action if needed, and save to cache.
         """
+        # Generate cache key once and store it to ensure consistency
+        self._cache_key = self._generate_cache_key()
+        
         # Try to load from cache first
         cached_outputs = self._load_from_cache()
         if cached_outputs is not None:
@@ -255,12 +401,12 @@ class Action(ABC):
     def clear_cache(self):
         """Clear the cache for this action."""
         if self.cache_dir.exists():
-            cache_key = self._generate_cache_key()
+            cache_key = getattr(self, '_cache_key', None) or self._generate_cache_key()
             cache_path = self._get_cache_path(cache_key)
             
             if cache_path.exists():
                 cache_path.unlink()
-                metadata_path = cache_path.with_suffix('.json')
+                metadata_path = cache_path.with_suffix('.yaml')
                 if metadata_path.exists():
                     metadata_path.unlink()
                 logger.info(f"Cleared cache for {self.__class__.__name__}")
@@ -337,15 +483,7 @@ class Action(ABC):
             if hasattr(self, attr_name):
                 attr_value = getattr(self, attr_name)
                 if attr_value is not None:
-                    # For models/torch objects, try to move to CPU first
-                    try:
-                        if hasattr(attr_value, 'cpu'):
-                            attr_value.cpu()
-                        elif hasattr(attr_value, 'to'):
-                            attr_value.to('cpu')
-                    except:
-                        pass  # Ignore errors during CPU movement
-                    
+                    # Directly delete without moving to CPU (more efficient)
                     # Set to None to free reference
                     setattr(self, attr_name, None)
                     cleaned_attributes.append(attr_name)
