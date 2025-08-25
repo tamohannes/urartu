@@ -8,6 +8,7 @@ import torch
 from datasets import Dataset, load_dataset
 from torch.utils.data import DataLoader
 import random
+import pandas as pd
 from collections import defaultdict 
 
 PARAREL_RELS = ['P103', 'P127', 'P136', 'P138', 'P140', 'P159', 'P176', 'P19', 'P20', 'P264', 'P279', 'P30', 'P364', 'P37', 'P407', 'P413', 'P449', 'P495', 'P740', 'P1376', 'P36']
@@ -16,122 +17,278 @@ def setup_task(disco_gp):
     data_dict = {}
     if disco_gp.cfg.task_type == 'ioi':
         data_dict = setup_ioi_dataset(disco_gp.cfg, disco_gp.tokenizer)
-        #return setup_ioi(disco_gp.cfg, disco_gp.tokenizer)
+        return get_dataloader(disco_gp.cfg, data_dict)
     elif disco_gp.cfg.task_type == 'blimp':
         data_dict = setup_blimp_dataset(disco_gp.cfg, disco_gp.tokenizer)
-        #return setup_blimp(disco_gp.cfg, disco_gp.tokenizer)
+        return get_dataloader(disco_gp.cfg, data_dict)
     elif disco_gp.cfg.task_type == 'glue':
         data_dict = setup_sst2(disco_gp.cfg, disco_gp.tokenizer)
-    elif disco_gp.cfg.task_type == 'coqa':
-        data_dict = setup_coqa(disco_gp.cfg, disco_gp.tokenizer)
-    return get_dataloader(disco_gp.cfg, data_dict)
+        return get_dataloader(disco_gp.cfg, data_dict)
+    elif disco_gp.cfg.task_type == 'boolq':
+        data_dict = setup_boolq(disco_gp.cfg, disco_gp.tokenizer)
+    elif disco_gp.cfg.task_type == 'winogrande':
+        data_dict = setup_winogrande(disco_gp.cfg, disco_gp.tokenizer)
+    elif disco_gp.cfg.task_type == 'copa':
+        data_dict = setup_copa(disco_gp.cfg, disco_gp.tokenizer)
+    elif disco_gp.cfg.task_type == 'snli':
+        data_dict = setup_snli(disco_gp.cfg, disco_gp.tokenizer)
+    return get_dataloader_big_dataset(disco_gp.cfg, data_dict, disco_gp.tokenizer)
 
-def setup_coqa(cfg, tokenizer, max_turns=1, seed=42, safety_buffer=20):
+def get_dataloader_big_dataset(cfg, data_dict, tokenizer, split_ratio=0.3):
     """
-    Keeps full question + answer; trims story tokens precisely so that the tokenized
-    prompt length <= tokenizer.model_max_length.
+    General dataloader builder for large NLP datasets
     """
-    random.seed(seed)
-    ds = load_dataset("stanfordnlp/coqa")
-    train = ds["train"]
+    ds = Dataset.from_dict(data_dict).train_test_split(split_ratio, seed=42)
 
-    # collect all answers for realistic distractors
-    all_answers = [ans for conv in train for ans in conv["answers"]["input_text"] if ans.strip()]
+    # Collate function: tokenize batch dynamically
+    def collate_fn(batch):
+        prompts = [item["prompts"] for item in batch]
+
+        # Tokenize only the prompts for input_ids + attention_mask
+        tokenized = tokenizer(
+            prompts,
+            padding=True,
+            truncation=True,
+            return_tensors="pt"
+        )
+
+        # Prepare batch dict
+        batch_dict = {
+            "prompts": prompts,
+            "targets": [item["targets"] for item in batch],
+            "input_ids": tokenized["input_ids"],
+            "attention_mask": tokenized["attention_mask"],
+            "seq_lens": tokenized["attention_mask"].sum(-1),
+            "target good": [item["target good"] for item in batch],
+            "target bad": [item["target bad"] for item in batch],
+        }
+        return batch_dict
+
+    train_dl = DataLoader(
+        ds["train"],
+        batch_size=cfg.batch_size,
+        shuffle=True,
+        collate_fn=collate_fn,
+        num_workers=cfg.num_workers if hasattr(cfg, "num_workers") else 0,
+        pin_memory=True
+    )
+
+    eval_dl = DataLoader(
+        ds["test"],
+        batch_size=cfg.batch_size,
+        shuffle=False,
+        collate_fn=collate_fn,
+        num_workers=cfg.num_workers if hasattr(cfg, "num_workers") else 0,
+        pin_memory=True
+    )
+
+    return Namespace(train=train_dl, eval=eval_dl)
+ 
+
+def balanced_subset(dataset, n_per_class):
+    """Return balanced subset with equal yes/no answers."""
+    df = pd.DataFrame(dataset)
+    yes_df = df[df["answer"] == True].sample(n_per_class, random_state=42)
+    no_df = df[df["answer"] == False].sample(n_per_class, random_state=42)
+    balanced_df = pd.concat([yes_df, no_df]).sample(frac=1, random_state=42)  # shuffle
+    return Dataset.from_pandas(balanced_df)
+
+def setup_boolq(cfg, tokenizer, subset_size=None, n_per_class=500):
+    boolq_ds = load_dataset("boolq")
 
     prompts, targets, targets_good, targets_bad = [], [], [], []
-    max_len = int(tokenizer.model_max_length)
 
-    too_long_count = 0
-    for conv in train:
-        story = conv["story"]
+    # Sampling options
+    if n_per_class is not None:  # Balanced sampling
+        boolq_train = balanced_subset(boolq_ds["train"], n_per_class)
+    elif subset_size is not None:  # Random subset
+        boolq_train = boolq_ds["train"].shuffle(seed=42).select(range(subset_size))
+    else:
+        boolq_train = boolq_ds["train"]
 
-        # Pre-encode story once to ids so we can slice by token ids precisely
-        story_ids_full = tokenizer(
-            "Passage: " + story,
-            add_special_tokens=False
-        )["input_ids"]
+    for row in boolq_train:
+        passage = row["passage"].strip()
+        question = row["question"].strip()
+        label = bool(row["answer"])  # True/False
 
-        for i, (q, a) in enumerate(zip(conv["questions"], conv["answers"]["input_text"])):
-            if i >= max_turns:
-                break
+        # Make explicit yes/no style question
+        prompt = f"Passage: {passage}\nQuestion: {question}? ( yes or no)\nAnswer:"
+        
+        good = " yes" if label else " no"
+        bad = " no" if label else " yes"
 
-            # question + "Answer:" tail (we keep this whole)
-            q_part = f"\nQuestion: {q}\nAnswer:"
-            q_part_ids = tokenizer(q_part, add_special_tokens=False)["input_ids"]
-            base_len = len(q_part_ids)
+        prompts.append(prompt)
+        targets.append((good.strip(), bad.strip()))
+        targets_good.append(good)
+        targets_bad.append(bad)
 
-            # compute allowed story length in token ids (exact)
-            allowed_story_tokens = max_len - base_len - safety_buffer
-            if allowed_story_tokens < 0:
-                # question alone too long (very rare). fallback: truncate question.
-                allowed_story_tokens = 0
-
-            # slice story ids to allowed size
-            short_story_ids = story_ids_full[:allowed_story_tokens]
-            short_story = tokenizer.decode(
-                short_story_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True
-            )
-
-            prompt = short_story + q_part
-
-            # verify exact tokenized length of the constructed prompt
-            enc = tokenizer(prompt, add_special_tokens=False)
-            if len(enc["input_ids"]) > max_len:
-                # fallback: aggressively truncate the encoded prompt to max_len - safety_buffer
-                too_long_count += 1
-                enc_ids = enc["input_ids"][: max_len - safety_buffer]
-                prompt = tokenizer.decode(
-                    enc_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True
-                )
-
-                # final check (should be <= max_len)
-                enc = tokenizer(prompt, add_special_tokens=False)
-                if len(enc["input_ids"]) > max_len:
-                    # as a last resort, truncate to exactly max_len
-                    enc_ids = enc["input_ids"][:max_len]
-                    prompt = tokenizer.decode(
-                        enc_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True
-                    )
-
-            # Build targets: good is true answer; bad is sampled realistic distractor
-            good = " " + a.strip()
-            bad = " " + random.choice(all_answers) if all_answers else " I don't know"
-            # avoid identical distractor
-            retries = 0
-            while bad.strip() == a.strip() and retries < 10:
-                bad = " " + random.choice(all_answers)
-                retries += 1
-
-            prompts.append(prompt)
-            targets.append((a.strip(), bad.strip()))
-            targets_good.append(good)
-            targets_bad.append(bad)
-
-    # final tokenization (batch) with truncation & padding for safety
     tokenized = tokenizer(
         prompts,
         return_tensors="pt",
         padding=True,
-        truncation=True,
-        max_length=max_len
+        truncation=True
     )
-
-    # sanity assert (optional) to ensure nothing exceeds max_len
-    max_observed = tokenized["input_ids"].shape[1]
-    assert max_observed <= max_len, f"Observed {max_observed} > max_len {max_len}"
 
     data_dict = {
         "prompts": prompts,
         "targets": targets,
         "input_ids": tokenized["input_ids"],
         "seq_lens": tokenized["attention_mask"].sum(-1),
-        "target good": [
-            token_ids[0] for token_ids in tokenizer(targets_good, add_special_tokens=False)["input_ids"]
-        ],
-        "target bad": [
-            token_ids[0] for token_ids in tokenizer(targets_bad, add_special_tokens=False)["input_ids"]
-        ],
     }
+
+    first_token_idx = 0
+    data_dict["target good"] = [
+        token_ids[first_token_idx]
+        for token_ids in tokenizer(targets_good, add_special_tokens=False)["input_ids"]
+    ]
+    data_dict["target bad"] = [
+        token_ids[first_token_idx]
+        for token_ids in tokenizer(targets_bad, add_special_tokens=False)["input_ids"]
+    ]
+    return data_dict
+
+def setup_snli(cfg, tokenizer, subset_size=None, n_per_class=500):
+    snli_ds = load_dataset("snli")
+
+    # Filter out -1 labels (missing)
+    def filter_valid(ex):
+        return ex["label"] in [0, 1, 2]
+
+    snli_train = snli_ds["train"].filter(filter_valid)
+
+    # Optional sampling
+    if n_per_class is not None:
+        samples = []
+        for label in [0, 1, 2]:  # entailment=0, neutral=1, contradiction=2
+            label_subset = [ex for ex in snli_train if ex["label"] == label]
+            samples.extend(random.sample(label_subset, min(n_per_class, len(label_subset))))
+        snli_train = Dataset.from_list(samples)
+    elif subset_size is not None:
+        snli_train = snli_train.shuffle(seed=42).select(range(subset_size))
+
+    prompts, targets, tg, tb = [], [], [], []
+
+    label_map = {0: "entailment", 1: "neutral", 2: "contradiction"}
+
+    for ex in snli_train:
+        premise = ex["premise"].strip()
+        hypothesis = ex["hypothesis"].strip()
+        gold_label = label_map[ex["label"]]
+
+        # Instruction-style prompt with explicit label choices
+        instruction = (
+            "Decide the relationship between the premise and the hypothesis. "
+            "Choose only one of: entailment, neutral, contradiction."
+        )
+        input_text = f"Premise: {premise}\nHypothesis: {hypothesis}"
+        prompt = f"Instruction: {instruction}\nInput: {input_text}\nOutput:"
+
+        # Good target
+        good = f" {gold_label}"
+
+        # Pick a "bad" target randomly from the other two classes
+        bad_label = random.choice([l for l in label_map.values() if l != gold_label])
+        bad = f" {bad_label}"
+
+        prompts.append(prompt)
+        targets.append((good.strip(), bad.strip()))
+        tg.append(good)
+        tb.append(bad)
+    tokenized = tokenizer(prompts, return_tensors="pt", padding=True,
+                                   truncation=True)
+
+    data_dict = {
+        "prompts": prompts,
+        "targets": targets,
+        "input_ids": tokenized["input_ids"],
+        "seq_lens": tokenized["attention_mask"].sum(-1)
+    }
+
+    data_dict["target good"] = [
+        ids[0] for ids in tokenizer(tg, add_special_tokens=False)["input_ids"]
+    ]
+    data_dict["target bad"] = [
+        ids[0] for ids in tokenizer(tb, add_special_tokens=False)["input_ids"]
+    ]
+    return data_dict
+
+def setup_winogrande(cfg, tokenizer):
+    ds = load_dataset("winogrande", "winogrande_s")["train"]
+
+    prompts, targets, targets_good, targets_bad = [], [], [], []
+
+    for ex in ds:
+        sentence = ex["sentence"]
+        option1, option2 = ex["option1"], ex["option2"]
+        correct = option1 if ex["answer"] == "1" else option2
+        incorrect = option2 if correct == option1 else option1
+
+        # Replace the blank "_" with nothing for prompt clarity
+        prompt = sentence.replace("_", "_____") + "\nFill in the blank:"
+        prompts.append(prompt)
+
+        targets.append((correct, incorrect))
+        targets_good.append(" " + correct)
+        targets_bad.append(" " + incorrect)
+
+    tokenized = tokenizer(prompts, return_tensors='pt', padding=True, truncation=True)
+
+    data_dict = {
+        'prompts': prompts,
+        'targets': targets,
+        'input_ids': tokenized['input_ids'],
+        'seq_lens': tokenized['attention_mask'].sum(-1),
+        'target good': [ids[0] for ids in tokenizer(targets_good, add_special_tokens=False)['input_ids']],
+        'target bad': [ids[0] for ids in tokenizer(targets_bad, add_special_tokens=False)['input_ids']],
+    }
+    return data_dict
+
+def setup_copa(cfg, tokenizer):
+    # Load dataset
+    copa_ds = load_dataset("super_glue", "copa")
+
+    prompts, targets, targets_good, targets_bad = [], [], [], []
+
+    for row in copa_ds['train']:
+        premise = row['premise']
+        choice1 = row['choice1']
+        choice2 = row['choice2']
+        label = row['label']  # 0 means choice1 is correct, 1 means choice2 is correct
+
+        # Determine connector word
+        connector = " because " if row['question'] == "cause" else " so "
+        prompt = premise + connector
+
+        # Assign good/bad targets
+        if label == 0:
+            target_good, target_bad = choice1, choice2
+        else:
+            target_good, target_bad = choice2, choice1
+
+        prompts.append(prompt)
+        targets.append((target_good, target_bad))
+        targets_good.append(" " + target_good)
+        targets_bad.append(" " + target_bad)
+
+    # Build data_dict
+    data_dict = {
+        "prompts": prompts,
+        "targets": targets,
+    }
+
+    tokenized = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True)
+    data_dict["input_ids"] = tokenized["input_ids"]
+    data_dict["seq_lens"] = tokenized["attention_mask"].sum(-1)
+
+    first_token_idx = 0
+    data_dict["target good"] = [
+        token_ids[first_token_idx] for token_ids in
+        tokenizer(targets_good, add_special_tokens=False)["input_ids"]
+    ]
+    data_dict["target bad"] = [
+        token_ids[first_token_idx] for token_ids in
+        tokenizer(targets_bad, add_special_tokens=False)["input_ids"]
+    ]
     return data_dict
 
 
@@ -163,9 +320,7 @@ def get_stratified_sst2_subset(n_per_class=500, seed=42):
 
 
 def setup_sst2(cfg, tokenizer, n_per_class=500):
-    dataset = get_stratified_sst2_subset(n_per_class)
-
-    
+    dataset = get_stratified_sst2_subset(n_per_class)    
     prompts, targets, targets_good, targets_bad = [], [], [], []
 
     for row in dataset:
