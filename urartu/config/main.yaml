@@ -10,7 +10,7 @@ debug: ???
 # Optional pipeline configuration (only used by pipeline actions)
 pipeline_config: {}
 
-run_dir: ".runs/${action_config}/${now:%Y-%m-%d}_${now:%H-%M-%S}"
+run_dir: ".runs/${action_name}/${now:%Y-%m-%d}_${now:%H-%M-%S}"
 
 hydra:
   sweep:
