@@ -27,6 +27,7 @@ CACHE_IGNORE_KEYS = {
     "cache_enabled",
     "force_rerun", 
     "cache_max_age_hours",
+    "cache_max_age_days",
     "cache_max_age",
     
     # Memory management settings (don't affect outputs)
@@ -45,6 +46,7 @@ CACHE_IGNORE_KEYS = {
     # Pipeline metadata
     "pipeline_id",
     "pipeline_name",
+    "pipeline_config_hash",  # Pipeline-specific hash, shouldn't affect cross-pipeline cache sharing
     
     # Runtime/execution settings that don't affect outputs
     "action_name",  # This is metadata, not part of action logic
@@ -104,15 +106,22 @@ class Action(ABC):
         if has_device_config:  # Use the same check as device config
             self.cache_enabled = self.action_config.get('cache_enabled', True)
             self.force_rerun = self.action_config.get('force_rerun', False) 
-            self.cache_max_age = self.action_config.get('cache_max_age_hours', None)
+            
+            # Support both days and hours with proper conversion, prefer days
+            cache_max_age_days = self.action_config.get('cache_max_age_days', None)
+            cache_max_age_hours = self.action_config.get('cache_max_age_hours', None)
+            
+            if cache_max_age_days is not None:
+                self.cache_max_age = cache_max_age_days * 24 * 3600  # Convert days to seconds
+            elif cache_max_age_hours is not None:
+                self.cache_max_age = cache_max_age_hours * 3600  # Convert hours to seconds
+            else:
+                self.cache_max_age = None
         else:
             # Fallback defaults when action_config is not a dict-like object
             self.cache_enabled = True
             self.force_rerun = False
             self.cache_max_age = None
-            
-        if self.cache_max_age is not None:
-            self.cache_max_age = self.cache_max_age * 3600  # Convert to seconds
         
         # Use a shared cache directory by extracting the base .runs folder from run_dir
         # run_dir is typically something like: /path/to/.runs/pipeline_name/timestamp/

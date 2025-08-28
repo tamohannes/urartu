@@ -154,7 +154,17 @@ class Pipeline(Action):
         # Cache configuration from pipeline
         self.cache_enabled = self.pipeline_config.get('cache_enabled', True)
         self.force_rerun = self.pipeline_config.get('force_rerun', False)
-        self.cache_max_age = self.pipeline_config.get('cache_max_age_hours', None)
+        
+        # Support both days and hours with proper conversion, prefer days
+        cache_max_age_days = self.pipeline_config.get('cache_max_age_days', None)
+        cache_max_age_hours = self.pipeline_config.get('cache_max_age_hours', None)
+        
+        if cache_max_age_days is not None:
+            self.cache_max_age = cache_max_age_days * 24 * 3600  # Convert days to seconds
+        elif cache_max_age_hours is not None:
+            self.cache_max_age = cache_max_age_hours * 3600  # Convert hours to seconds
+        else:
+            self.cache_max_age = None
             
         # Use a shared cache directory by extracting the base .runs folder from run_dir
         # run_dir is typically something like: /path/to/.runs/pipeline_name/timestamp/
@@ -214,7 +224,8 @@ class Pipeline(Action):
             'actions',             # List of actions in the pipeline
             'cache_enabled',       # Pipeline-level caching control
             'force_rerun',         # Pipeline-level cache bypass
-            'cache_max_age_hours', # Pipeline-level cache expiry
+            'cache_max_age_hours', # Pipeline-level cache expiry (hours)
+            'cache_max_age_days',  # Pipeline-level cache expiry (days)
         }
         
         logger.info(f"🔧 Pipeline config propagation debug:")
@@ -480,6 +491,10 @@ class Pipeline(Action):
         action_cfg = OmegaConf.create(self.cfg)  # Deep copy base config
         action_cfg.action_name = pipeline_action.action_name  # Set the action name
         
+        # Get pipeline config hash to ensure cache invalidation when pipeline config changes
+        pipeline_config_hash = self._get_config_hash()
+        logger.info(f"🔑 Adding pipeline config hash to action config: {pipeline_config_hash}")
+        
         # Apply config overrides by creating proper action config structure
         if pipeline_action.config_overrides:
             # Use resolved config overrides (with pipeline references resolved)
@@ -512,6 +527,10 @@ class Pipeline(Action):
                 OmegaConf.create(action_config_dict)        # Override (action-specific, with injections)
             )
             
+            # Add pipeline config hash to ensure cache invalidation when pipeline config changes
+            merged_config.pipeline_config_hash = pipeline_config_hash
+            logger.info(f"🔑 Added pipeline config hash {pipeline_config_hash} to action '{pipeline_action.name}'")
+            
             logger.info(f"   merged_config type: {type(merged_config)}")
             if 'device' in merged_config:
                 logger.info(f"   merged_config.device: {merged_config['device']}")
@@ -528,7 +547,13 @@ class Pipeline(Action):
         else:
             # Even if no overrides, apply common pipeline configs
             pipeline_common_configs = self._get_common_pipeline_configs()
-            action_cfg.action_config = OmegaConf.create(pipeline_common_configs)  # Set the action configuration
+            base_config = OmegaConf.create(pipeline_common_configs)
+            
+            # Add pipeline config hash even for actions without overrides
+            base_config.pipeline_config_hash = pipeline_config_hash
+            logger.info(f"🔑 Added pipeline config hash {pipeline_config_hash} to action '{pipeline_action.name}'")
+            
+            action_cfg.action_config = base_config  # Set the action configuration
             
             logger.info(f"🔧 No action overrides for '{pipeline_action.name}' - using pipeline configs:")
             if 'device' in pipeline_common_configs:
@@ -687,6 +712,25 @@ class Pipeline(Action):
             "outputs": {name: output.outputs for name, output in self.action_outputs.items()}
         }
         
+    def _get_config_hash(self) -> str:
+        """
+        Generate a hash of the complete configuration to ensure cache invalidation
+        when config files are modified.
+        
+        Returns:
+            A hash string representing the complete configuration
+        """
+        # Include the complete configuration in the hash
+        config_for_hash = self._make_serializable(self.cfg)
+        
+        # Convert to JSON for consistent ordering
+        config_string = json.dumps(config_for_hash, sort_keys=True)
+        
+        # Generate hash
+        config_hash = hashlib.sha256(config_string.encode()).hexdigest()[:12]
+        
+        return config_hash
+
     def _generate_cache_key(self, pipeline_action: PipelineAction, resolved_config: Dict[str, Any]) -> str:
         """
         Generate a unique cache key for an action based on its configuration.
@@ -708,6 +752,10 @@ class Pipeline(Action):
         # Remove pipeline-level keys that don't affect action outputs
         filtered_config = {k: v for k, v in resolved_config.items() if k not in CACHE_IGNORE_KEYS}
         
+        # Get hash of complete config file to ensure cache invalidation when config changes
+        config_hash = self._get_config_hash()
+        logger.debug(f"Generated config hash for cache key: {config_hash}")
+        
         # For cross-pipeline cache sharing: if this action has no previous outputs (first action),
         # generate a cache key based only on the action config, not pipeline context
         has_previous_outputs = bool(self.action_outputs)
@@ -715,6 +763,7 @@ class Pipeline(Action):
         
         if not has_previous_outputs and not has_depends_on:
             # First action with no dependencies - use simplified cache key for cross-pipeline sharing
+            # Only include action-specific config, not pipeline-wide config hash
             key_factors = {
                 'action_name': pipeline_action.action_name,
                 'config': self._make_serializable(filtered_config),
@@ -725,6 +774,7 @@ class Pipeline(Action):
                 'action_name': pipeline_action.action_name,
                 'config_overrides': self._make_serializable(filtered_config),
                 'outputs_to_track': self._make_serializable(pipeline_action.outputs_to_track),
+                'config_hash': config_hash,  # Include complete config hash
                 # Include previous action outputs that might affect this action
                 'previous_outputs': {
                     name: self._make_serializable(output.outputs) 
@@ -788,6 +838,7 @@ class Pipeline(Action):
                 'action_name': action_output.action_name,
                 'timestamp': datetime.fromtimestamp(cache_entry.timestamp).isoformat(),
                 'config_hash': config_hash,
+                'full_config_hash': self._get_config_hash(),  # Add complete config hash for debugging
                 'outputs_keys': list(action_output.outputs.keys()),
                 'full_config': full_config  # Add full config content
             }
