@@ -1,7 +1,6 @@
 from typing import Dict, List, NamedTuple, Optional, Tuple, Union, cast, overload
 from typing_extensions import Literal
 
-import os
 import gc
 from pathlib import Path
 
@@ -11,7 +10,7 @@ from pprint import pprint
 import numpy as np
 import math
 import logging
-
+import optuna
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -641,19 +640,19 @@ class CircuitTransformer(nn.Module):
 
         return faith_results
 
-    def search_circuit(self, modes='we'):
+    def search_circuit(self, modes='we', trial = None):
         result = []
         if 'w' in modes:
-            result = result + self.run_prune(mode='w')
+            result = result + self.run_prune(mode='w', trial = trial)
 
         gc.collect()
         torch.cuda.empty_cache()
 
         if 'e' in modes:
-            result = result + self.run_prune(mode='e')
+            result = result + self.run_prune(mode='e', trial = trial)
         return result
 
-    def run_prune(self, mode):
+    def run_prune(self, mode, trial = None):
 
         if mode == 'w':
             # weight pruning
@@ -737,17 +736,25 @@ class CircuitTransformer(nn.Module):
                 results['comp'] = comp['acc']
                 list_result.append(results)
                 pprint(results)
+                if trial is not None:
+                    if mode == 'w':
+                        trial.report(results['acc'], step=epoch)
+                    else:
+                        trial.report(results['acc'], step=epoch + self.cfg.weight.train_epochs)
+                    if trial.should_prune():
+                        raise optuna.TrialPruned()
+
 
         weight_mask = self.mask_logits_dict_weight
         edge_mask = self.mask_logits_dict_edge
 
-        # output_dir = Path(self.cfg.output_dir_path) / self.cfg.exp_name
-        # output_dir.mkdir(parents=True, exist_ok=True)
+        #output_dir = Path(self.cfg.output_dir_path) / self.cfg.exp_name
+        #output_dir.mkdir(parents=True, exist_ok=True)
 
-        # if mode == 'w':
-        #     torch.save(weight_mask, output_dir / f'weight_mask_{mode}.pt')
-        # if mode == 'e':
-        #     torch.save(edge_mask, output_dir / f'edge_mask_{mode}.pt')
+        #if mode == 'w':
+        #    torch.save(weight_mask, output_dir / f'weight_mask_{mode}.pt')
+        #elif mode == 'e':
+        #    torch.save(edge_mask, output_dir / f'edge_mask_{mode}.pt')
 
         del mask_logits
         del optimizer

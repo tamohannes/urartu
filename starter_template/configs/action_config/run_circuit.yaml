@@ -18,26 +18,30 @@ action_config:
         no_repeat_ngram_size: 2
 
     dataset:
-      type:
-        _target_: urartu.datasets.hf.dataset_from_dict.DatasetFromDict
-      name: blimp
       task_type: 'blimp'
       task: 'anaphor_number_agreement'
       batch_size: 32
-      subset: 'anaphor_number_agreement'
-      split: validation
-      input_key: "input_ids"
       train_test_split: 0.3
       shuffle: True
-      num_workers: 2
+
+  
+  optuna:
+    use_optuna: True
+    number_of_trial: 20
+    weight_lr: [0.4, 1]
+    weight_lambda_sparse_init: [0, 1]
+    weight_lambda_complete_init: [1, 10]
+    edge_lr: [0.03, 0.5]
+    edge_lambda_sparse_init: [0, 1]
+    edge_lambda_complete_init: [5, 20]
 
   weight_hparams:
     use_weight_masks: True
     gs_temp_weight: 0.01
     logits_w_init: 1.0
-    lr: 0.1
-    lambda_sparse_init: 1.0
-    lambda_complete_init: 1.0
+    lr: 0.5376557319099762
+    lambda_sparse_init: 0.7312822389962907 #[0 -> 1]
+    lambda_complete_init: 4.328231813945975 # [1 -> 10]
     min_times_lambda_sparse: 1
     max_times_lambda_sparse: 1000
 
@@ -49,20 +53,14 @@ action_config:
     use_edge_masks: True
     gs_temp_edge: 0.01
     logits_e_init: 1.0
-    lr: 0.01 #0.1
-    lambda_sparse_init: 1.0
-    lambda_complete_init: 1.0
+    lr: 0.474370890393508 #0.1
+    lambda_sparse_init: 0.3801449932063512
+    lambda_complete_init: 19.97181564013833
     min_times_lambda_sparse: 1.
     max_times_lambda_sparse: 1000.
     train_epochs: 100
     n_epoch_warmup_lambda_sparse: 500
     n_epoch_cooldown_lambda_sparse: 1
-
-  task_cfg:
-    name: 'blimp'
-    task_type: 'blimp'
-    task: 'anaphor_number_agreement'
-    batch_size: 32
 
   exp_cfg:
     evaluate_every: 1

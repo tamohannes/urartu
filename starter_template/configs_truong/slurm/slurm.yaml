@@ -6,7 +6,7 @@ partition: "gpu"
 time_hours: 72
 time_minutes: 0
 constraint: ""
-timeout_min: 1000
+timeout_min: 3000
 mem: 80
 port_id: 11337 
 nodelist: "bob,itchy,krusty,melvin,minerva,moe,penelope,rubeus,scratchy,turtok"
