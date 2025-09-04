@@ -4,29 +4,43 @@ debug: false
 
 action_config:
   experiment_name: "discogp with blimp"
-  device: "cuda" # auto, cuda, cpu (default) 
+  device: "cuda" # auto, cuda, cpu (default)
+  seed: 42
+  modes: 'we'
 
-  task:
-    model:
-      type:
-        _target_: urartu.models.disco_gp.circuit_lm.CircuitTransformer
-      name: "gpt2"
-      dtype: torch.bfloat16
-      generate:
-        max_length: 100
-        num_beams: 5
-        no_repeat_ngram_size: 2
+  model:
+    name: "gpt2" #[gpt2, Qwen/Qwen3-0.6B, Qwen/Qwen3-1.7B, meta-llama/Llama-3.2-1B-Instruct]
+    dtype: torch.bfloat16 #["torch.bf16", "torch.fp16", "torch.fp32"]
 
-    dataset:
-      task_type: 'blimp'
-      task: 'anaphor_number_agreement'
-      batch_size: 32
-      train_test_split: 0.3
-      shuffle: True
+  dataset:
+    task_type: 'blimp' #["pararel", "ioi", "blimp"]  
+    batch_size: 64
+    train_split: 0.8
+    dev_split: 0.1
+    test_split: 0.1
 
+  blimp:
+    paradigm: 'anaphor_number_agreement' 
+    # [ anaphor_gender_agreement
+    #   anaphor_number_agreement
+    #   determiner_noun_agreement_1
+    #   determiner_noun_agreement_irregular_1
+    #   determiner_noun_agreement_with_adjective_1
+    #   determiner_noun_agreement_with_adj_irregular_1
+    #   regular_plural_subject_verb_agreement_1
+    #   irregular_plural_subject_verb_agreement_1
+    # ]
+
+  ioi:
+    n-ioi-data: 1000
   
+  pararel:
+    pararel-rels: P36 # ['P103', 'P127', 'P136', 'P138', 'P140', 'P159', 'P176', 'P19', 'P20', 'P264',
+                      #   'P279', 'P30', 'P364', 'P37', 'P407', 'P413', 'P449', 'P495', 'P740', 'P1376', 'P36']
+    pararel-data: "../actions/disco_gp/data/pararel_data_all.json"
+
   optuna:
-    use_optuna: True
+    use_optuna: False
     number_of_trial: 20
     weight_lr: [0.4, 1]
     weight_lambda_sparse_init: [0, 1]
@@ -45,22 +59,22 @@ action_config:
     min_times_lambda_sparse: 1
     max_times_lambda_sparse: 1000
 
-    train_epochs: 300
+    train_epochs: 1
     n_epoch_warmup_lambda_sparse: 500
     n_epoch_cooldown_lambda_sparse: 1
 
   edge_hparams:
     use_edge_masks: True
-    gs_temp_edge: 0.01
+    gs_temp_edge: 1.0
     logits_e_init: 1.0
     lr: 0.474370890393508 #0.1
     lambda_sparse_init: 0.3801449932063512
     lambda_complete_init: 19.97181564013833
-    min_times_lambda_sparse: 1.
-    max_times_lambda_sparse: 1000.
-    train_epochs: 100
-    n_epoch_warmup_lambda_sparse: 500
-    n_epoch_cooldown_lambda_sparse: 1
+    min_times_lambda_sparse: 0.01
+    max_times_lambda_sparse: 100.0
+    train_epochs: 1
+    n_epoch_warmup_lambda_sparse: 20
+    n_epoch_cooldown_lambda_sparse: 20
 
   exp_cfg:
     evaluate_every: 1

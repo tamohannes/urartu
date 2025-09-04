@@ -32,6 +32,97 @@ class Config:
         body = ", ".join(f"{k}={v!r}" for k, v in self._values.items())
         return f"Config({body})" if body else "Config()"
 
+    def has(self, *keys) -> bool:
+        """
+        Check if this Config or any of its sub-configs contain the key(s).
+        If a list of keys is provided, returns True only if all keys are present.
+        """
+        return all(self._has(k) for k in keys)
+
+    def _has(self, key) -> bool:
+        """
+        Check if this Config or any of its sub-configs contain the key.
+        """
+        if key in self._values or key in self._sections:
+            return True
+        for sub in self._sections.values():
+            if sub._has(key):
+                return True
+        return False
+
+    def get(self, key, default=None):
+        """
+        Like dict.get: return the value for key if present, else default.
+        """
+        try:
+            return getattr(self, key)
+        except AttributeError:
+            return default
+
+    def to_dict(self, collapse=False, concat_name=True) -> Dict[str, Any]:
+        """
+        Convert this Config (and all sub-configs) to a nested dict.
+
+        If collapse is True, return a flattened dict.
+          - If concat_name is True, parent/child names are joined with '--'.
+          - If concat_name is a str, that string is used as the separator.
+          - If concat_name is False, parent names are not included in flattened keys.
+        Nested lists are handled by enumerating their items and using the index
+        as a path component in flattened keys.
+        """
+        # Keys that were promoted from immediate subsections (to support flat getattr)
+        promoted_from_sections = set().union(
+            *[set(sub._values.keys()) for sub in self._sections.values()] or [set()]
+        )
+
+        def _materialize(value):
+            if isinstance(value, Config):
+                return value.to_dict(collapse=False, concat_name=concat_name)
+            if isinstance(value, list):
+                return [_materialize(v) for v in value]
+            return value
+
+        if not collapse:
+            # Nested dict: omit promoted duplicates at the top level
+            out: Dict[str, Any] = {
+                k: _materialize(v)
+                for k, v in self._values.items()
+                if k not in promoted_from_sections
+            }
+            for name, sub in self._sections.items():
+                out[name] = sub.to_dict(collapse=False, concat_name=concat_name)
+            return out
+
+        # Collapsed / flattened representation
+        sep = "--" if concat_name is True else (concat_name if isinstance(concat_name, str) else None)
+        flat: Dict[str, Any] = {}
+
+        def _emit(path_parts, value):
+            if isinstance(value, Config):
+                # Emit this config's own (non-promoted) leaves
+                for k, v in value._values.items():
+                    if path_parts or k not in promoted_from_sections:
+                        # At root, skip promoted duplicates; below root, always include
+                        _emit(path_parts + [k], v)
+                # Recurse into named subsections
+                for name, sub in value._sections.items():
+                    _emit(path_parts + [name], sub)
+                return
+            if isinstance(value, list):
+                for idx, item in enumerate(value):
+                    _emit(path_parts + [str(idx)], item)
+                return
+
+            # Make key according to policy
+            if sep is None:
+                key = str(path_parts[-1]) if path_parts else ""
+            else:
+                key = sep.join(map(str, path_parts))
+            flat[key] = value
+
+        _emit([], self)
+        return flat
+
     @classmethod
     def from_configs(cls, **sections):
         root = cls(**sections)               # installs named sub-configs
@@ -62,14 +153,15 @@ class Config:
         return _to_cfg(raw)
 
     @classmethod
-    def from_tl(self, model_name, **kwargs) -> "Config":
+    def from_tl(self, full_model_name, **kwargs) -> "Config":
         """
         Load a model from the TL library and convert it to a Config.
         This is a convenience wrapper around `loading.from_pretrained`.
         """
-        official_model_name = loading.get_official_model_name(model_name)
+        official_model_name = loading.get_official_model_name(full_model_name)
         tl_config = loading.get_pretrained_model_config(official_model_name, **kwargs)
         cfg = Config(**tl_config.to_dict())
+        cfg.full_model_name = full_model_name
         return cfg
 
     def add(self, **sections: "Config") -> "Config":

@@ -10,11 +10,12 @@ from urartu.common.action import Action
 from urartu.common.dataset import Dataset
 from urartu.common.configs import Config
 
-from disco_gp.data import get_data_as_dict
-from disco_gp.circuit_lm import CircuitTransformer
+from disco_gp import DiscoGPTransformer, Config, set_seed
 from transformers import AutoTokenizer
 import optuna
 import os
+import gc
+import torch
 
 
 class RunCircuit(Action):
@@ -22,10 +23,17 @@ class RunCircuit(Action):
         super().__init__(cfg, aim_run)
 
     def setup_config(self):
-        model_cfg = Config.from_tl(self.cfg.action_config.task.model.name, dtype=eval_dtype(self.cfg.action_config.task.model.dtype))
+        model_cfg = Config.from_tl(self.cfg.action_config.model.name, dtype=eval_dtype(self.cfg.action_config.model.dtype))
         weight_cfg = Config(**self.cfg.action_config.weight_hparams)
         edge_cfg = Config(**self.cfg.action_config.edge_hparams)
-        task_cfg = Config(**self.cfg.action_config.task.dataset)
+        task_cfg = Config(**
+                          {
+                              **self.cfg.action_config.dataset, 
+                              **self.cfg.action_config.get(self.cfg.action_config.dataset.task_type),
+                              'ds_split_ratios': (self.cfg.action_config.dataset.train_split,
+                                                  self.cfg.action_config.dataset.dev_split,
+                                                  self.cfg.action_config.dataset.test_split)
+                        })
         exp_cfg = Config(**self.cfg.action_config.exp_cfg)
         output_dir_path = Config(**{'run_dir': self.cfg.run_dir})
         circuit_cfg = Config.from_configs(
@@ -41,12 +49,13 @@ class RunCircuit(Action):
     
     def choose_best_model(self, epoch_results):
         df = pd.DataFrame(epoch_results)
-        df.insert(0, 'epoch', range(0, len(df)))
+        df.insert(0, 'index', range(0, len(df)))
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         df.to_excel(os.path.join(self.cfg.run_dir, f'train_results_{timestamp}.xlsx'), index=False)
-        df['composite_score'] = df['acc'] * (1- df['edge_density']) * (1 - df['weight_density'])
+        df['composite_score'] = df['train_acc'] * df['test_acc'] * df['eval_acc'] * (1- df['edge_density']) * (1 - df['weight_density'])
         best_epoch = df['composite_score'].idxmax()
         best_result = df.iloc[best_epoch]
+        print('Best result:')
         print(best_result)
 
     def tokenizer(self):
@@ -74,7 +83,7 @@ class RunCircuit(Action):
         circuit_cfg.edge.lr = self.set_up_range_param(trial, "edge_lr", self.cfg.action_config.optuna.edge_lr, log = True)
         circuit_cfg.edge.lambda_sparse_init = self.set_up_range_param(trial, "edge_lambda_sparse_init", self.cfg.action_config.optuna.edge_lambda_sparse_init)
         circuit_cfg.edge.lambda_complete_init = self.set_up_range_param(trial, "edge_lambda_complete_init", self.cfg.action_config.optuna.edge_lambda_complete_init)
-        model = CircuitTransformer.from_pretrained(circuit_cfg)
+        model = DiscoGPTransformer.from_pretrained(circuit_cfg)
         model.prepare_origin_output(model.dls.eval)
         results = model.search_circuit(trial = trial)
         result = results[-1]
@@ -84,16 +93,35 @@ class RunCircuit(Action):
         return acc * (1 - weight_density) * (1 - edge_density)
     
     def run_circuit(self):
+        # Reproducibility
+        set_seed(self.cfg.action_config.seed)
         circuit_cfg = self.setup_config()
         print(f'weight_lr: {circuit_cfg.weight.lr}')
         print(f'edge_lr: {circuit_cfg.edge.lr}')
-        model = CircuitTransformer.from_pretrained(circuit_cfg)
-        model.prepare_origin_output(model.dls.eval)
-        result = model.evaluate()
-        print('Result after model evaluate:')
-        print(result)
-        epoch_results = model.search_circuit()
+        print("[Step] Loading model + data…")
+        model = DiscoGPTransformer.from_pretrained(circuit_cfg)
+
+        print("[Step] Setup the experiment…")
+        model.setup_experiment()
+        
+        print("[Step] Baseline evaluation:")
+        model.evaluate_and_report(epoch=0, mode="baseline")
+
+        print(f"[Step] Pruning (modes='{self.cfg.action_config.modes}')…")
+        #model.search(modes=self.cfg.action_config.modes)
+        epoch_results = model.search(modes=self.cfg.action_config.modes)
+        print('[Step] Choose best moodel')
         self.choose_best_model(epoch_results)
+
+        print("[Step] Final evaluation:")
+        model.evaluate_and_report(epoch="final", mode="pruned")
+
+        print("[Step] Teardown…")
+        model.teardown_experiment()
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def search_hyperparameters(self):
         pruner = optuna.pruners.MedianPruner(n_warmup_steps=100)
