@@ -150,9 +150,13 @@ class Action(ABC):
         if runs_dir is None:
             runs_dir = Path('.') / '.runs'
         
-        # Use shared pipeline_cache directory for cross-pipeline cache sharing
-        # This allows actions to share cache entries across different pipelines
-        self.cache_dir = runs_dir / 'pipeline_cache'
+        # Use universal cache directory shared across all actions and pipelines
+        # This allows actions to reuse cache regardless of context (standalone vs pipeline)
+        # Cache keys include config hashes, so different configs won't collide
+        self.cache_dir = runs_dir / 'cache'
+        
+        logger.info(f"📦 Using universal cache directory: {self.cache_dir}")
+        
         self._cached_outputs = None
         self._cache_key = None
     

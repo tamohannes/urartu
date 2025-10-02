@@ -191,7 +191,12 @@ class Pipeline(Action):
         if runs_dir is None:
             runs_dir = Path('.') / '.runs'
         
-        self.cache_dir = runs_dir / 'pipeline_cache'
+        # Use universal cache directory shared across all actions and pipelines
+        # This allows actions to reuse cache regardless of context (standalone vs pipeline)
+        # Cache keys include config hashes, so different configs won't collide
+        self.cache_dir = runs_dir / 'cache'
+        
+        logger.info(f"📦 Using universal cache directory: {self.cache_dir}")
 
         if self.cache_max_age is not None:
             self.cache_max_age = self.cache_max_age * 3600  # Convert to seconds
@@ -596,6 +601,9 @@ class Pipeline(Action):
         if action_class:
             # Use action class with run() method
             action_instance = action_class(action_cfg, self.aim_run)
+            
+            # Note: No need to override cache_dir - all actions and pipelines share universal cache
+            # The cache_dir is already set correctly in Action.__init__()
             
             # Run the action with its own caching support
             if hasattr(action_instance, 'run_with_cache'):
