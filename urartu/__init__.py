@@ -248,7 +248,11 @@ def _hydra_main(cfg: DictConfig) -> None:
         raise FileNotFoundError("Missing 'actions' directory.")
 
     # Verify specific action file exists
-    action_file_path = cwd.joinpath("actions", f"{cfg.action_config}.py")
+    # action_name is the identifier for the action to run
+    if not hasattr(cfg, 'action_name') or cfg.action_name is None:
+        raise ValueError("Config must specify 'action_name' to identify the action to run")
+    
+    action_file_path = cwd.joinpath("actions", f"{cfg.action_name}.py")
     if action_file_path.exists():
         logging.info(
             f"The action file '{action_file_path}' is located and is ready to be used!"
@@ -274,8 +278,8 @@ def _hydra_main(cfg: DictConfig) -> None:
 
     aim_run = None
     if cfg.aim.use_aim:
-        # Get experiment name from action config (with fallback for backward compatibility)
-        experiment_name = getattr(cfg.get('action', {}), 'experiment_name', cfg.action_config)
+        # Get experiment name from action config
+        experiment_name = getattr(cfg.get('action', {}), 'experiment_name', cfg.action_name)
         
         aim_run = Run(
             repo=cfg.aim.repo,
@@ -347,7 +351,7 @@ def _hydra_main(cfg: DictConfig) -> None:
             try:
                 launch_on_slurm(
                     module=cwd,
-                    action_name=cfg.action_config,
+                    action_name=cfg.action_name,
                     cfg=cfg,
                     aim_run=aim_run,
                 )
@@ -369,7 +373,7 @@ def _hydra_main(cfg: DictConfig) -> None:
             try:
                 launch(
                     module=cwd,
-                    action_name=cfg.action_config,
+                    action_name=cfg.action_name,
                     cfg=cfg,
                     aim_run=aim_run,
                 )

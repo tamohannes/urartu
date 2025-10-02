@@ -81,19 +81,21 @@ class Action(ABC):
         from the Device class with the device setting specified in the action configuration.
         """
         self.cfg = cfg
-        # Handle the case where cfg.action_config might be the action name (string) or config (dict)
-        action_attr = getattr(cfg, 'action_config', {})
-        if isinstance(action_attr, str):
-            # cfg.action_config is the action name, look for action config elsewhere
-            # For pipeline actions, use the pipeline config
-            if hasattr(cfg, 'pipeline_config') and cfg.pipeline_config:
-                self.action_config = cfg.pipeline_config
-            else:
-                # For individual actions, the config is at the top level (flattened)
-                self.action_config = cfg
+        # action_name is always the identifier
+        # action_config contains the actual configuration for regular actions
+        # pipeline_config contains the actual configuration for pipelines
+        
+        # Priority: action_config > pipeline_config > cfg
+        # When an action runs inside a pipeline, action_config is specifically created for it
+        if hasattr(cfg, 'action_config') and cfg.action_config:
+            # This is a regular action or an action within a pipeline - use action_config
+            self.action_config = cfg.action_config
+        elif hasattr(cfg, 'pipeline_config') and cfg.pipeline_config:
+            # This is a pipeline itself - use pipeline_config
+            self.action_config = cfg.pipeline_config
         else:
-            # cfg.action_config is the action config dictionary
-            self.action_config = action_attr
+            # Fallback: config is at the top level (flattened structure)
+            self.action_config = cfg
         
         self.aim_run = aim_run
         # Handle both regular dict and OmegaConf DictConfig
