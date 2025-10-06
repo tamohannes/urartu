@@ -754,12 +754,291 @@ Additional files may be included depending on the type of run, ensuring you have
 
 ## **Effortless Launch**
 
-Launching with Urartu is a breeze, offering you two launch options:
+Launching with Urartu is a breeze, offering you three powerful launch options:
 
-- Local Marvel: Execute jobs right on your local machine.
-- Cluster Voyage: Set sail to the slurm cluster by toggling the `slurm.use_slurm` in `config_{username}/slurm/slurm.yaml` to switch between local and cluster executions.
+- **Local Marvel**: Execute jobs right on your local machine.
+- **Cluster Voyage**: Set sail to the slurm cluster by toggling the `slurm.use_slurm` in `config_{username}/slurm/slurm.yaml` to switch between local and cluster executions.
+- **🚀 Remote Execution** (NEW!): Seamlessly sync your codebase to remote machines and execute jobs there - perfect for HPC clusters and remote GPU servers!
 
 Choose your adventure and launch your projects with ease! 🚀
+
+## **🌐 Remote Execution - Run Anywhere**
+
+**New Feature!** Execute your Urartu workflows on remote machines with automatic codebase sync, conda environment management, and seamless output streaming.
+
+### **What is Remote Execution?**
+
+Remote execution allows you to:
+- 📦 **Auto-sync your codebase** from local to remote machines
+- 🐍 **Manage conda environments** automatically on remote machines
+- 🔄 **Stream logs in real-time** from remote execution
+- 🎯 **Submit SLURM jobs** directly from your local machine
+- 💾 **Cache environments** for fast subsequent runs
+
+Perfect for:
+- HPC clusters with SLURM schedulers
+- Remote GPU servers
+- Cloud compute instances
+- Lab servers with restricted access
+
+### **Quick Start**
+
+1. **Configure your remote machine**:
+
+Create a machine configuration file (e.g., `configs_{username}/machine/hpc_cluster.yaml`):
+
+```yaml
+type: remote
+host: "your.cluster.hostname"
+username: "your_username"
+ssh_key: "~/.ssh/id_rsa"
+remote_workdir: "/path/to/remote/workspace"
+project_name: "my_ml_project"
+```
+
+2. **Run your workflow remotely**:
+
+```bash
+# Execute on remote machine with SLURM
+urartu action_config=my_pipeline aim=aim slurm=slurm machine=hpc_cluster
+
+# Execute on remote machine locally (no SLURM)
+urartu action_config=my_pipeline aim=aim slurm=no_slurm machine=hpc_cluster
+```
+
+That's it! Urartu handles:
+- ✅ Git repository detection and packaging
+- ✅ Efficient file transfer using rsync
+- ✅ Conda environment export and recreation
+- ✅ Package installation (urartu + dependencies)
+- ✅ Remote command execution
+- ✅ Real-time log streaming
+
+### **How Remote Execution Works**
+
+**Step-by-Step Workflow**:
+
+1. **📁 Repository Detection**: Automatically finds your git repository root
+2. **📦 Code Packaging**: Uses rsync to sync only tracked files (respects .gitignore)
+3. **🐍 Environment Export**: Exports your local conda environment to YAML
+4. **🔄 Transfer**: Efficiently syncs code and environment file to remote
+5. **🏗️ Environment Setup**: 
+   - Detects conda on remote machine (handles HPC modules, custom paths)
+   - Creates or reuses existing environment (cached for speed!)
+   - Installs urartu and your dependencies
+6. **▶️ Execution**: Runs your command on the remote machine
+7. **📊 Streaming**: Shows real-time logs on your local terminal
+
+**Architecture**:
+```
+┌─────────────────┐           ┌─────────────────┐
+│  Local Machine  │           │ Remote Machine  │
+│                 │           │                 │
+│  📂 Git Repo    │──rsync──▶ │  📂 Workspace   │
+│  🐍 Conda Env   │──export─▶ │  🐍 Create Env  │
+│  ⚙️ Command     │───ssh───▶ │  ▶️ Execute     │
+│  📺 Terminal    │◀─stream── │  📋 Logs        │
+└─────────────────┘           └─────────────────┘
+```
+
+### **Configuration Details**
+
+#### **Machine Configuration**
+
+```yaml
+# configs_{username}/machine/my_remote.yaml
+type: remote                    # Must be "remote" for remote execution
+host: "cluster.university.edu"  # Remote hostname or IP
+username: "myuser"              # SSH username
+ssh_key: "~/.ssh/id_rsa"       # Path to SSH private key
+remote_workdir: "/scratch/myuser/projects"  # Base remote directory
+project_name: "my_project"      # Project subdirectory name
+```
+
+**Default Local Configuration**:
+```yaml
+# urartu/config/machine/local.yaml (default)
+type: local  # Run on current machine
+```
+
+#### **Multiple Machine Profiles**
+
+Create different profiles for various remote machines:
+
+```bash
+# configs_{username}/machine/
+#   ├── local.yaml        # Local execution (default)
+#   ├── gpu_server.yaml   # Lab GPU server
+#   ├── hpc_cluster.yaml  # University HPC
+#   └── cloud_vm.yaml     # Cloud instance
+```
+
+Then switch between them:
+```bash
+urartu action_config=my_pipeline machine=gpu_server
+urartu action_config=my_pipeline machine=hpc_cluster  
+urartu action_config=my_pipeline machine=cloud_vm
+```
+
+### **Advanced Features**
+
+#### **🔍 Intelligent Conda Detection**
+
+Urartu automatically detects conda on remote machines using multiple methods:
+
+1. **Direct Binary Detection**: Searches common paths (`~/miniconda3`, `~/anaconda3`)
+2. **HPC Storage Paths**: Checks HPC storage locations (`/storage/*/work/$USER`)
+3. **Environment Modules**: Attempts to load via `module load conda/anaconda3/miniconda3`
+4. **Shell Functions**: Handles conda installed as shell functions
+
+No manual configuration needed - it just works!
+
+#### **📦 Smart File Syncing**
+
+Remote execution uses `rsync` for efficient file transfer:
+- ✅ Only syncs tracked files (uses `.gitignore`)
+- ✅ Excludes build artifacts (`__pycache__`, `*.pyc`, `.egg-info`)
+- ✅ Incremental sync (only changed files on subsequent runs)
+- ✅ Preserves directory structure
+
+#### **🐍 Environment Caching**
+
+Environments are cached on the remote machine:
+- **First run**: Creates environment from your exported YAML (~5-10 min)
+- **Subsequent runs**: Reuses existing environment (~10 seconds)
+- **Smart updates**: Only reinstalls when `setup.py` or `requirements.txt` change
+
+#### **📊 Real-Time Log Streaming**
+
+See execution logs in real-time on your local terminal:
+```bash
+[LOCAL]  Starting remote execution on myuser@cluster
+[LOCAL]  Found conda at: /storage/work/myuser/miniconda3/bin/conda
+[LOCAL]  Environment 'my_env' already exists (using cached)
+[LOCAL]  Package installed successfully
+[LOCAL]  ════════════════════════════════════════
+[REMOTE] Starting ML pipeline...
+[REMOTE] Loading dataset... 
+[REMOTE] Training model... Epoch 1/10
+[REMOTE] ...
+```
+
+### **Common Use Cases**
+
+#### **1. Remote SLURM Submission**
+
+Submit SLURM jobs from your local machine:
+
+```bash
+# Local command automatically submits SLURM job on remote
+urartu action_config=large_training \
+      aim=aim \
+      slurm=slurm \
+      machine=hpc_cluster
+```
+
+Your local `slurm.yaml` configuration is used on the remote machine!
+
+#### **2. Multi-Environment Development**
+
+Develop locally, test on remote GPU:
+
+```bash
+# Develop and test locally
+urartu action_config=my_model machine=local
+
+# Test on remote GPU server
+urartu action_config=my_model machine=gpu_server
+
+# Run full experiment on HPC cluster  
+urartu action_config=my_model machine=hpc_cluster slurm=slurm
+```
+
+#### **3. Distributed Experimentation**
+
+Run multiple experiments across different machines:
+
+```bash
+# Terminal 1: Run on GPU server
+urartu --multirun action_config=sweep_lr machine=gpu_server \
+       pipeline_config.learning_rate=1e-3,1e-4
+
+# Terminal 2: Run on HPC cluster
+urartu --multirun action_config=sweep_arch machine=hpc_cluster \
+       slurm=slurm pipeline_config.architecture=bert,roberta
+```
+
+### **Troubleshooting**
+
+#### **SSH Connection Issues**
+
+```bash
+# Test SSH connection manually
+ssh -i ~/.ssh/id_rsa username@hostname
+
+# If key requires password, add to ssh-agent
+ssh-add ~/.ssh/id_rsa
+```
+
+#### **Conda Not Found**
+
+The remote detection tries multiple methods automatically. If issues persist:
+
+1. Check conda is accessible in a login shell:
+   ```bash
+   ssh user@host "bash -l -c 'which conda'"
+   ```
+
+2. Make sure conda is in your `~/.bashrc` or `~/.zshrc`
+
+3. For HPC clusters, check if conda requires module loading:
+   ```bash
+   ssh user@host "bash -l -c 'module load anaconda3; which conda'"
+   ```
+
+#### **Environment Creation Fails**
+
+If the remote environment creation fails:
+
+1. **First run after changes**: Clear cached environment
+   ```bash
+   ssh user@host "rm -rf /remote/path/project_name/environment_*.yml"
+   ```
+
+2. **Dependency conflicts**: Simplify your environment or use `requirements.txt`
+
+3. **Manual setup**: Create environment manually on remote:
+   ```bash
+   ssh user@host
+   conda create -n my_env python=3.10
+   conda activate my_env
+   pip install urartu
+   ```
+
+#### **Permission Denied**
+
+Ensure SSH key has correct permissions:
+```bash
+chmod 600 ~/.ssh/id_rsa
+```
+
+### **Best Practices**
+
+✅ **Use version control**: Remote execution syncs your git repository
+✅ **Clean .gitignore**: Exclude large files, data, and build artifacts  
+✅ **Test locally first**: Debug on local machine before remote execution
+✅ **Use machine profiles**: Create reusable configuration for each remote
+✅ **Monitor first run**: Environment setup takes time on first execution
+✅ **Leverage caching**: Subsequent runs are much faster with cached environments
+
+### **Performance Tips**
+
+- **Environment reuse**: Keep environment names consistent for caching
+- **Minimal dependencies**: Export only necessary packages to speed up environment creation
+- **Incremental sync**: Only changed files are synced on subsequent runs
+- **Parallel experiments**: Use multiple terminals to submit to different machines simultaneously
+
+Remote execution makes Urartu truly portable - develop locally, execute anywhere! 🚀
 
 Encountered any issues or have suggestions? Feel free to open an issue for support.
 

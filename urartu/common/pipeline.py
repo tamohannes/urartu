@@ -655,12 +655,18 @@ class Pipeline(Action):
             return
             
 
-        # Load actions from configuration        
-        if 'actions' in self.pipeline_config:
-            # Load actions
+        # Load actions from configuration ONLY if not already added by subclass
+        # This allows subclasses to programmatically define actions with custom logic
+        logger.info(f"🔍 Pipeline.initialize(): self.actions = {len(self.actions)} items")
+        logger.info(f"🔍 Pipeline.initialize(): 'actions' in pipeline_config = {'actions' in self.pipeline_config}")
+        if not self.actions and 'actions' in self.pipeline_config:
+            logger.info("📥 Loading actions from YAML configuration")
+            # Load actions from YAML configuration
             for action_cfg in self.pipeline_config.actions:
-                # Get all config except the 'action_name' key (flattened structure)
-                config_overrides = {k: v for k, v in action_cfg.items() if k not in ['action_name', 'outputs_to_track']}
+                # Get all config except metadata keys
+                # IMPORTANT: Exclude 'depends_on' - it will be processed separately during action execution
+                config_overrides = {k: v for k, v in action_cfg.items() 
+                                  if k not in ['action_name', 'outputs_to_track', 'depends_on']}
                 
                 action = PipelineAction(
                     name=action_cfg.action_name,  # Use action_name as the name

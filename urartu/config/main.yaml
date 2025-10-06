@@ -3,6 +3,7 @@ defaults:
   - action_config: default_action_config
   - slurm: default_slurm
   - aim: default_aim
+  - machine: local
 
 action_name: ???
 debug: ???

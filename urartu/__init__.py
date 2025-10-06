@@ -13,7 +13,7 @@ from hydra.core.plugins import Plugins
 from omegaconf import OmegaConf
 
 from urartu.utils.hydra_plugin import UrartuPlugin
-from urartu.utils.launcher import launch, launch_on_slurm
+from urartu.utils.launcher import launch, launch_on_slurm, launch_remote
 
 Plugins.instance().register(UrartuPlugin)
 
@@ -226,6 +226,10 @@ def _hydra_main(cfg: DictConfig) -> None:
     """Hydra main function for running experiments."""
     hydra_cfg = HydraConfig.get()
     cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True, enum_to_str=True))
+
+    if cfg.machine.type == "remote":
+        launch_remote(cfg=cfg)
+        return
 
     cwd = Path.cwd()
 
