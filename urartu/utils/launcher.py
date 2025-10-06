@@ -23,8 +23,14 @@ def launch_remote(cfg: Dict):
     ssh_key = machine_cfg.ssh_key
     remote_workdir = Path(machine_cfg.remote_workdir)
     project_name = machine_cfg.project_name
+    force_reinstall = machine_cfg.get("force_reinstall", False)
+    force_env_export = machine_cfg.get("force_env_export", False)
 
     logging.info(f"Starting remote execution on {username}@{host}")
+    if force_reinstall:
+        logging.info("Force reinstall enabled - package will be reinstalled regardless of changes")
+    if force_env_export:
+        logging.info("Force environment export enabled - conda environment will be exported and transferred")
     
     # Get current conda environment name
     conda_env = os.environ.get("CONDA_DEFAULT_ENV", None)
@@ -91,6 +97,7 @@ def launch_remote(cfg: Dict):
         "--exclude=.pytest_cache",
         "--exclude=*.egg-info",
         "--exclude=environment_*.yml",
+        "--exclude=.install_marker",  # Preserve installation state
     ]
     
     # Check if .gitignore exists and add it to exclusions
@@ -106,31 +113,55 @@ def launch_remote(cfg: Dict):
         f"{username}@{host}:{remote_project_dir}/",
     ])
     
-    subprocess.run(rsync_cmd, check=True)
-    logging.info("Codebase transferred successfully.")
+    # Run rsync and capture output to check if files were actually transferred
+    rsync_result = subprocess.run(rsync_cmd, capture_output=True, text=True, check=True)
     
-    # Export conda environment
-    logging.info(f"Exporting conda environment '{conda_env}'...")
+    # Check if any files were actually transferred (rsync output contains file names when transferring)
+    files_transferred = False
+    transferred_files = []
+    for line in rsync_result.stdout.splitlines():
+        # Skip summary lines and check for actual file transfers
+        if line and not any(line.startswith(prefix) for prefix in ["sending", "sent", "total size", "building"]):
+            files_transferred = True
+            transferred_files.append(line)
+    
+    if files_transferred:
+        logging.info(f"Codebase changes detected, transferred {len(transferred_files)} file(s).")
+        if len(transferred_files) <= 10:
+            # Show files if not too many
+            for f in transferred_files:
+                logging.debug(f"  {f}")
+    else:
+        logging.info("Codebase unchanged, no files transferred.")
+    
+    # Only export and transfer conda environment if code was actually transferred or force_env_export is enabled
     env_file = project_root / f"environment_{conda_env}.yml"
     env_file_transferred = False
-    export_cmd = ["conda", "env", "export", "-n", conda_env, "--no-builds"]
-    try:
-        with open(env_file, "w") as f:
-            subprocess.run(export_cmd, stdout=f, check=True)
-        logging.info(f"Environment exported to {env_file}")
-        
-        # Transfer environment file to remote
-        rsync_env_cmd = [
-            "rsync", "-avz", "-e", ssh_cmd_str,
-            str(env_file),
-            f"{username}@{host}:{remote_project_dir}/"
-        ]
-        subprocess.run(rsync_env_cmd, check=True)
-        env_file_transferred = True
-        logging.info("Environment file transferred.")
-    except subprocess.CalledProcessError as e:
-        logging.warning(f"Failed to export conda environment: {e}. Will try to use existing remote environment.")
-        env_file_transferred = False
+    
+    should_export_env = files_transferred or force_env_export
+    
+    if should_export_env:
+        logging.info(f"Exporting conda environment '{conda_env}'...")
+        export_cmd = ["conda", "env", "export", "-n", conda_env, "--no-builds"]
+        try:
+            with open(env_file, "w") as f:
+                subprocess.run(export_cmd, stdout=f, check=True)
+            logging.info(f"Environment exported to {env_file}")
+            
+            # Transfer environment file to remote
+            rsync_env_cmd = [
+                "rsync", "-avz", "-e", ssh_cmd_str,
+                str(env_file),
+                f"{username}@{host}:{remote_project_dir}/"
+            ]
+            subprocess.run(rsync_env_cmd, check=True)
+            env_file_transferred = True
+            logging.info("Environment file transferred.")
+        except subprocess.CalledProcessError as e:
+            logging.warning(f"Failed to export conda environment: {e}. Will try to use existing remote environment.")
+            env_file_transferred = False
+    else:
+        logging.info("Skipping conda environment export (no code changes detected).")
     
     # 2. Setup remote environment
     logging.info("Setting up remote environment...")
@@ -286,23 +317,71 @@ fi
 # Activate environment
 conda activate {conda_env}
 
-# Install/update packages from synced codebase if setup.py exists
-if [ -f "{remote_project_dir}/setup.py" ]; then
-    echo "Found setup.py, installing/updating package..."
-    cd {remote_project_dir}
-    pip install -e .
-    echo "Package installed successfully."
-elif [ -f "{remote_project_dir}/requirements.txt" ]; then
-    echo "Found requirements.txt, installing/updating dependencies..."
-    cd {remote_project_dir}
-    pip install -r requirements.txt
-    echo "Dependencies installed successfully."
+# Smart installation check - only install if setup files changed
+# Since we use editable install (pip install -e .), code changes are automatically reflected
+# We only need to reinstall if setup.py or requirements.txt changed
+INSTALL_MARKER="{remote_project_dir}/.install_marker"
+FORCE_REINSTALL={str(force_reinstall).lower()}
+
+# Calculate hash of setup files only (not all Python files)
+cd {remote_project_dir}
+CURRENT_HASH=$(find . -type f \\( -name "setup.py" -o -name "requirements.txt" -o -name "pyproject.toml" \\) 2>/dev/null | sort | xargs md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
+if [ -z "$CURRENT_HASH" ]; then
+    CURRENT_HASH="no_hash"
+fi
+echo "Current setup files hash: $CURRENT_HASH"
+
+if [ "$FORCE_REINSTALL" = "true" ]; then
+    echo "Force reinstall enabled, will reinstall package..."
+    SHOULD_INSTALL=1
 else
-    if [ $ENV_EXISTS -eq 0 ]; then
-        echo "Warning: No setup.py or requirements.txt found. Make sure all dependencies are in the conda environment."
+    SHOULD_INSTALL=0
+    if [ -f "$INSTALL_MARKER" ]; then
+        LAST_HASH=$(cat "$INSTALL_MARKER" 2>/dev/null || echo "")
+        echo "Last setup files hash: $LAST_HASH"
+        if [ "$CURRENT_HASH" != "$LAST_HASH" ]; then
+            echo "Setup files changed (hash mismatch), reinstalling package..."
+            SHOULD_INSTALL=1
+        else
+            echo "Setup files unchanged. Skipping installation (editable mode will reflect code changes)."
+            # Verify urartu package is actually installed
+            if ! python -c "import urartu" 2>/dev/null; then
+                echo "Urartu package not found in environment, installing..."
+                SHOULD_INSTALL=1
+            else
+                echo "Package is installed in editable mode. Code changes will be automatically reflected."
+            fi
+        fi
     else
-        echo "Using existing environment dependencies."
+        echo "No install marker found, performing first-time installation..."
+        SHOULD_INSTALL=1
     fi
+fi
+
+# Install/update packages if needed
+if [ $SHOULD_INSTALL -eq 1 ]; then
+    if [ -f "{remote_project_dir}/setup.py" ]; then
+        echo "Installing package from setup.py..."
+        cd {remote_project_dir}
+        pip install -e .
+        echo "Package installed successfully."
+        # Save current hash
+        echo "$CURRENT_HASH" > "$INSTALL_MARKER"
+    elif [ -f "{remote_project_dir}/requirements.txt" ]; then
+        echo "Installing dependencies from requirements.txt..."
+        cd {remote_project_dir}
+        pip install -r requirements.txt
+        echo "Dependencies installed successfully."
+        echo "$CURRENT_HASH" > "$INSTALL_MARKER"
+    else
+        if [ $ENV_EXISTS -eq 0 ]; then
+            echo "Warning: No setup.py or requirements.txt found."
+        else
+            echo "Using existing environment dependencies."
+        fi
+    fi
+else
+    echo "Skipping installation - environment is up to date."
 fi
 
 echo "Environment setup complete."
@@ -336,13 +415,48 @@ echo "Environment setup complete."
     # Construct remote command
     original_args = sys.argv[1:]
     remote_args = []
+    custom_run_dir = None
+    
     for arg in original_args:
         if not arg.startswith("machine="):
-            remote_args.append(arg)
+            # Check if this is a run_dir argument
+            if arg.startswith("run_dir=") or arg.startswith("++run_dir="):
+                # Extract the value
+                if arg.startswith("++"):
+                    custom_run_dir = arg.split("=", 1)[1]
+                else:
+                    custom_run_dir = arg.split("=", 1)[1]
+                # Don't add it yet, we'll modify it
+            else:
+                remote_args.append(arg)
+    
     remote_args.append("machine=local")
     
     # Calculate the full remote working directory (repo root + relative path)
     remote_work_dir = remote_project_dir / relative_work_dir
+    
+    # Handle run_dir configuration
+    if custom_run_dir:
+        # User provided a custom run_dir
+        # Check if it already contains Hydra variables
+        if '${action_name}' in custom_run_dir or '${now:' in custom_run_dir:
+            # Already has variables, use as-is
+            remote_args.append(f'run_dir={custom_run_dir}')
+            logging.info(f"Using user-provided run_dir with Hydra variables: {custom_run_dir}")
+        else:
+            # No variables, append the standard structure
+            if custom_run_dir.endswith('/'):
+                base_path = custom_run_dir.rstrip('/')
+            else:
+                base_path = custom_run_dir
+            full_run_dir = f'{base_path}/\${{action_name}}/\${{now:%Y-%m-%d}}_\${{now:%H-%M-%S}}'
+            remote_args.append(f'run_dir={full_run_dir}')
+            logging.info(f"Appending action_name/timestamp structure to custom run_dir: {base_path}/...")
+    else:
+        # No custom run_dir, use default location
+        remote_runs_path = f"{remote_work_dir}/.runs"
+        remote_args.append(f'run_dir={remote_runs_path}/\${{action_name}}/\${{now:%Y-%m-%d}}_\${{now:%H-%M-%S}}')
+        logging.info(f"Setting run_dir to default absolute path: {remote_runs_path}/...")
     
     # Build command that activates conda environment and runs urartu
     urartu_command = " ".join(["urartu"] + remote_args)

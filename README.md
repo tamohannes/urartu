@@ -820,14 +820,21 @@ That's it! Urartu handles:
 
 1. **📁 Repository Detection**: Automatically finds your git repository root
 2. **📦 Code Packaging**: Uses rsync to sync only tracked files (respects .gitignore)
-3. **🐍 Environment Export**: Exports your local conda environment to YAML
+3. **🐍 Environment Export**: Conditionally exports conda environment (only if code changed)
 4. **🔄 Transfer**: Efficiently syncs code and environment file to remote
 5. **🏗️ Environment Setup**: 
    - Detects conda on remote machine (handles HPC modules, custom paths)
    - Creates or reuses existing environment (cached for speed!)
-   - Installs urartu and your dependencies
+   - Installs in editable mode (code changes instantly reflected)
+   - Smart reinstall (only when dependencies change)
 6. **▶️ Execution**: Runs your command on the remote machine
 7. **📊 Streaming**: Shows real-time logs on your local terminal
+
+**Performance Breakdown**:
+- **First run**: ~5-10 min (environment creation + full installation)
+- **Code changes only**: ~5-10 sec (rsync + skip install)
+- **Dependency changes**: ~2-5 min (rsync + reinstall only)
+- **No changes**: ~3-5 sec (rsync check + skip everything)
 
 **Architecture**:
 ```
@@ -853,6 +860,8 @@ username: "myuser"              # SSH username
 ssh_key: "~/.ssh/id_rsa"       # Path to SSH private key
 remote_workdir: "/scratch/myuser/projects"  # Base remote directory
 project_name: "my_project"      # Project subdirectory name
+force_reinstall: false          # Force package reinstallation (default: false)
+force_env_export: false         # Force conda environment export (default: false)
 ```
 
 **Default Local Configuration**:
@@ -901,27 +910,59 @@ Remote execution uses `rsync` for efficient file transfer:
 - ✅ Incremental sync (only changed files on subsequent runs)
 - ✅ Preserves directory structure
 
-#### **🐍 Environment Caching**
+#### **🐍 Smart Environment & Installation Management**
 
-Environments are cached on the remote machine:
+**Environment Caching:**
 - **First run**: Creates environment from your exported YAML (~5-10 min)
 - **Subsequent runs**: Reuses existing environment (~10 seconds)
-- **Smart updates**: Only reinstalls when `setup.py` or `requirements.txt` change
+- **Conditional export**: Only exports/transfers conda environment when code changes detected
+
+**Intelligent Installation:**
+- **Editable install**: Uses `pip install -e .` so code changes are instantly reflected
+- **Smart reinstall**: Only reinstalls when `setup.py`, `requirements.txt`, or `pyproject.toml` change
+- **Skip on code changes**: Regular Python file edits don't trigger reinstallation
+- **Hash-based detection**: Tracks setup file changes to minimize unnecessary installations
 
 #### **📊 Real-Time Log Streaming**
 
 See execution logs in real-time on your local terminal:
 ```bash
 [LOCAL]  Starting remote execution on myuser@cluster
+[LOCAL]  Codebase unchanged, no files transferred.
+[LOCAL]  Skipping conda environment export (no code changes detected).
 [LOCAL]  Found conda at: /storage/work/myuser/miniconda3/bin/conda
-[LOCAL]  Environment 'my_env' already exists (using cached)
-[LOCAL]  Package installed successfully
+[LOCAL]  Setup files unchanged. Skipping installation (editable mode).
+[LOCAL]  Package is installed in editable mode. Code changes will be automatically reflected.
 [LOCAL]  ════════════════════════════════════════
 [REMOTE] Starting ML pipeline...
 [REMOTE] Loading dataset... 
 [REMOTE] Training model... Epoch 1/10
 [REMOTE] ...
 ```
+
+#### **⚙️ Advanced Configuration Options**
+
+**Force Reinstallation:**
+When you've modified your local environment or want to ensure clean installation:
+```bash
+# Via CLI
+urartu action_config=my_pipeline machine=hpc machine.force_reinstall=true
+
+# Or in config
+force_reinstall: true  # In your machine config file
+```
+
+**Force Environment Export:**
+When you've added/updated packages in your conda environment:
+```bash
+# Via CLI
+urartu action_config=my_pipeline machine=hpc machine.force_env_export=true
+
+# Or in config
+force_env_export: true  # In your machine config file
+```
+
+These options override the smart caching for when you need explicit control.
 
 ### **Common Use Cases**
 
@@ -1035,8 +1076,11 @@ chmod 600 ~/.ssh/id_rsa
 
 - **Environment reuse**: Keep environment names consistent for caching
 - **Minimal dependencies**: Export only necessary packages to speed up environment creation
-- **Incremental sync**: Only changed files are synced on subsequent runs
+- **Incremental sync**: Only changed files are synced on subsequent runs (via rsync)
 - **Parallel experiments**: Use multiple terminals to submit to different machines simultaneously
+- **Editable install advantage**: Regular code changes don't trigger reinstallation (~2 sec vs ~2 min)
+- **Conditional exports**: Conda environment only exported when code actually changes
+- **Setup file isolation**: Only modify `setup.py`/`requirements.txt` when dependencies truly change
 
 Remote execution makes Urartu truly portable - develop locally, execute anywhere! 🚀
 

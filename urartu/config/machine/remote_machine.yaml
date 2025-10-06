@@ -4,3 +4,5 @@ username: ???
 ssh_key: ???
 remote_workdir: ???
 project_name: ???
+force_reinstall: false  # Set to true to force package reinstallation
+force_env_export: false  # Set to true to always export/transfer conda environment
