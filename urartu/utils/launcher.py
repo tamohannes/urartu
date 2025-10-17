@@ -13,6 +13,7 @@ def launch_remote(cfg: Dict):
     Launches a job on a remote machine.
     """
     import os
+    import shlex
     import subprocess
     import sys
     from pathlib import Path
@@ -133,6 +134,58 @@ def launch_remote(cfg: Dict):
                 logging.debug(f"  {f}")
     else:
         logging.info("Codebase unchanged, no files transferred.")
+    
+    # Check if urartu is installed in editable mode and sync it too
+    logging.info("Checking if urartu is installed in editable/development mode...")
+    try:
+        import urartu
+        urartu_location = Path(urartu.__file__).parent.parent
+        logging.info(f"Found urartu package at: {urartu_location}")
+        
+        # Check if it's an editable install by looking for .git or setup.py in parent
+        is_editable = (urartu_location / ".git").exists() or (urartu_location / "setup.py").exists()
+        
+        if is_editable and urartu_location != project_root:
+            logging.info("Urartu is installed in editable mode from a different location. Syncing it to remote...")
+            
+            # Create remote urartu directory
+            remote_urartu_dir = remote_workdir / "urartu"
+            ssh_mkdir_cmd = ["ssh", "-i", ssh_key, f"{username}@{host}", f"mkdir -p {remote_urartu_dir}"]
+            subprocess.run(ssh_mkdir_cmd, check=True)
+            
+            # Sync urartu source
+            rsync_urartu_cmd = [
+                "rsync",
+                "-avz",
+                "--delete",
+                "-e",
+                ssh_cmd_str,
+                "--exclude=.git",
+                "--exclude=*.pyc",
+                "--exclude=__pycache__",
+                "--exclude=.pytest_cache",
+                "--exclude=*.egg-info",
+            ]
+            
+            # Check for urartu's .gitignore
+            urartu_gitignore = urartu_location / ".gitignore"
+            if urartu_gitignore.exists():
+                rsync_urartu_cmd.append(f"--exclude-from={urartu_gitignore}")
+            
+            rsync_urartu_cmd.extend([
+                str(urartu_location) + "/",
+                f"{username}@{host}:{remote_urartu_dir}/",
+            ])
+            
+            rsync_urartu_result = subprocess.run(rsync_urartu_cmd, capture_output=True, text=True, check=True)
+            logging.info(f"Urartu framework synced to {remote_urartu_dir}")
+            files_transferred = True  # Force reinstall since urartu changed
+        elif is_editable:
+            logging.info("Urartu is part of the current project, already synced.")
+        else:
+            logging.info("Urartu is installed from pip/conda, no sync needed.")
+    except Exception as e:
+        logging.warning(f"Could not check urartu installation: {e}. Continuing without urartu sync.")
     
     # Only export and transfer conda environment if code was actually transferred or force_env_export is enabled
     env_file = project_root / f"environment_{conda_env}.yml"
@@ -358,8 +411,31 @@ else
     fi
 fi
 
+# Check if urartu needs installation/update
+URARTU_MARKER="{remote_workdir}/urartu/.install_marker"
+SHOULD_INSTALL_URARTU=0
+
+if [ -d "{remote_workdir}/urartu" ] && [ -f "{remote_workdir}/urartu/setup.py" ]; then
+    # Check if urartu is already installed from this location
+    if pip show urartu 2>/dev/null | grep -q "Location.*{remote_workdir}/urartu"; then
+        echo "Urartu already installed in editable mode from synced location. Skipping reinstall."
+    else
+        echo "Urartu not yet installed from synced location, will install..."
+        SHOULD_INSTALL_URARTU=1
+    fi
+fi
+
 # Install/update packages if needed
 if [ $SHOULD_INSTALL -eq 1 ]; then
+    # First, install urartu if needed
+    if [ $SHOULD_INSTALL_URARTU -eq 1 ]; then
+        echo "Installing urartu framework from synced source..."
+        cd {remote_workdir}/urartu
+        pip install -e .
+        echo "Urartu framework installed successfully."
+        echo "installed" > "$URARTU_MARKER"
+    fi
+    
     if [ -f "{remote_project_dir}/setup.py" ]; then
         echo "Installing package from setup.py..."
         cd {remote_project_dir}
@@ -382,6 +458,7 @@ if [ $SHOULD_INSTALL -eq 1 ]; then
     fi
 else
     echo "Skipping installation - environment is up to date."
+    # No need to reinstall urartu - editable mode reflects changes automatically
 fi
 
 echo "Environment setup complete."
@@ -459,7 +536,22 @@ echo "Environment setup complete."
         logging.info(f"Setting run_dir to default absolute path: {remote_runs_path}/...")
     
     # Build command that activates conda environment and runs urartu
-    urartu_command = " ".join(["urartu"] + remote_args)
+    # Properly quote arguments that contain spaces or special characters
+    # For key=value arguments, only quote the value part if needed
+    quoted_args = []
+    for arg in remote_args:
+        if '=' in arg:
+            key, value = arg.split('=', 1)
+            # Only quote the value if it contains spaces or special characters
+            if ' ' in value or any(c in value for c in ['$', '!', '&', '|', ';', '<', '>', '(', ')', '{', '}', '[', ']', '*', '?', '`']):
+                # Use double quotes for the value
+                quoted_args.append(f'{key}="{value}"')
+            else:
+                quoted_args.append(arg)
+        else:
+            # For non-key=value args, use shlex.quote which uses single quotes
+            quoted_args.append(shlex.quote(arg))
+    urartu_command = " ".join(["urartu"] + quoted_args)
     
     # Use the same conda initialization approach
     if conda_init_path == "DETECT_IN_SCRIPT":

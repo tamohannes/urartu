@@ -392,30 +392,47 @@ class Pipeline(Action):
         self.resolvers.append(resolver)
         return self
         
-    def _resolve_value(self, value: Any, context: Optional[Dict[str, Any]] = None) -> Any:
+    def _resolve_value(self, value: Any, context: Optional[Dict[str, Any]] = None, depth: int = 0) -> Any:
         """
         Resolve configuration values that may contain special references.
         
         Args:
             value: The value to resolve
             context: Context dictionary for resolvers
+            depth: Recursion depth for debugging
             
         Returns:
             Resolved value
         """
+        from omegaconf import DictConfig, ListConfig
+        
         context = context or {"action_outputs": self.action_outputs}
         
         # Handle string values that might need resolution
         if isinstance(value, str):
-            for resolver in self.resolvers:
-                if resolver.can_resolve(value):
-                    return resolver.resolve(value, context)
+            # DEBUG: Check if this is a template variable
+            if value.startswith("{{actions."):
+                logger.info(f"{'  ' * depth}🔍 Found template variable: {value}")
+                for resolver in self.resolvers:
+                    logger.info(f"{'  ' * depth}  Trying resolver: {resolver.__class__.__name__}")
+                    if resolver.can_resolve(value):
+                        logger.info(f"{'  ' * depth}  ✅ Resolver can handle it")
+                        resolved = resolver.resolve(value, context)
+                        logger.info(f"{'  ' * depth}  Resolved to: {resolved}")
+                        return resolved
+                    else:
+                        logger.info(f"{'  ' * depth}  ❌ Resolver cannot handle it")
+                logger.warning(f"{'  ' * depth}⚠️ No resolver could handle: {value}")
+            else:
+                for resolver in self.resolvers:
+                    if resolver.can_resolve(value):
+                        return resolver.resolve(value, context)
         
-        # Recursively resolve nested structures
-        elif isinstance(value, dict):
-            return {k: self._resolve_value(v, context) for k, v in value.items()}
-        elif isinstance(value, list):
-            return [self._resolve_value(v, context) for v in value]
+        # Recursively resolve nested structures (handle both dict and DictConfig)
+        elif isinstance(value, (dict, DictConfig)):
+            return {k: self._resolve_value(v, context, depth + 1) for k, v in value.items()}
+        elif isinstance(value, (list, ListConfig)):
+            return [self._resolve_value(v, context, depth + 1) for v in value]
         
         return value
         
@@ -471,9 +488,30 @@ class Pipeline(Action):
                 metadata={"skipped": True}
             )
         
+        # DEBUG: Log available action outputs before resolution
+        logger.info(f"🔍 DEBUG: Available action_outputs before resolution: {list(self.action_outputs.keys())}")
+        for name, output in self.action_outputs.items():
+            logger.info(f"   - {name}: outputs={list(output.outputs.keys()) if output.outputs else 'None'}")
+        
+        # DEBUG: Write to file
+        debug_file = Path(self.cfg.run_dir) / "pipeline_debug.txt"
+        debug_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(debug_file, "a") as f:
+            f.write(f"\n--- Running action: {pipeline_action.name} ---\n")
+            f.write(f"Available action_outputs: {list(self.action_outputs.keys())}\n")
+            for name, output in self.action_outputs.items():
+                f.write(f"  {name}: {list(output.outputs.keys()) if output.outputs else 'None'}\n")
+            f.write(f"Config overrides before resolution: {str(pipeline_action.config_overrides)[:500]}\n")
+        
         # Resolve config overrides to handle any references
         context = {"action_outputs": self.action_outputs}
+        logger.info(f"🔍 DEBUG: Config overrides before resolution: {pipeline_action.config_overrides}")
         resolved_config_overrides = self._resolve_value(pipeline_action.config_overrides, context)
+        logger.info(f"🔍 DEBUG: Config overrides after resolution: {resolved_config_overrides}")
+        
+        # DEBUG: Write resolution result to file
+        with open(debug_file, "a") as f:
+            f.write(f"Config overrides after resolution: {str(resolved_config_overrides)[:500]}\n")
         
         # Import the action module
         try:
@@ -617,6 +655,10 @@ class Pipeline(Action):
             
             # Extract outputs
             outputs = self._extract_outputs(pipeline_action, action_instance)
+            logger.info(f"🔍 DEBUG: Extracted outputs from {pipeline_action.name}: {list(outputs.keys()) if outputs else 'None'}")
+            if outputs:
+                for key, value in outputs.items():
+                    logger.info(f"   - {key}: {str(value)[:100]}")
             
             # Ensure we have outputs even from cached actions
             if not outputs and hasattr(action_instance, '_cached_outputs') and action_instance._cached_outputs:
@@ -664,9 +706,9 @@ class Pipeline(Action):
             # Load actions from YAML configuration
             for action_cfg in self.pipeline_config.actions:
                 # Get all config except metadata keys
-                # IMPORTANT: Exclude 'depends_on' - it will be processed separately during action execution
+                # IMPORTANT: Keep 'depends_on' - it will be processed during action execution by _inject_action_outputs
                 config_overrides = {k: v for k, v in action_cfg.items() 
-                                  if k not in ['action_name', 'outputs_to_track', 'depends_on']}
+                                  if k not in ['action_name', 'outputs_to_track']}
                 
                 action = PipelineAction(
                     name=action_cfg.action_name,  # Use action_name as the name
@@ -695,6 +737,14 @@ class Pipeline(Action):
         logger.info(f"\nStarting pipeline execution with {len(self.actions)} actions")
         
         successful_actions = 0
+        # DEBUG: Write to file for debugging
+        debug_file = Path(self.cfg.run_dir) / "pipeline_debug.txt"
+        debug_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(debug_file, "a") as f:
+            f.write(f"\n{'='*80}\n")
+            f.write(f"Starting pipeline with {len(self.actions)} actions\n")
+            f.write(f"{'='*80}\n")
+        
         for i, action in enumerate(self.actions):
             try:
                 # Run the action
@@ -702,6 +752,18 @@ class Pipeline(Action):
                 
                 # Store output for use by later actions
                 self.action_outputs[action.name] = action_output
+                logger.info(f"🔍 DEBUG: Stored outputs for '{action.name}' in action_outputs")
+                logger.info(f"🔍 DEBUG: action_outputs keys are now: {list(self.action_outputs.keys())}")
+                logger.info(f"🔍 DEBUG: Outputs for '{action.name}': {list(action_output.outputs.keys()) if action_output.outputs else 'None'}")
+                
+                # DEBUG: Write to file
+                with open(debug_file, "a") as f:
+                    f.write(f"\nAction {i+1}: {action.name}\n")
+                    f.write(f"  Outputs: {list(action_output.outputs.keys()) if action_output.outputs else 'None'}\n")
+                    if action_output.outputs:
+                        for key, value in action_output.outputs.items():
+                            f.write(f"    {key}: {str(value)[:200]}\n")
+                    f.write(f"  action_outputs now has: {list(self.action_outputs.keys())}\n")
                 
                 if not action_output.metadata.get("skipped", False):
                     successful_actions += 1

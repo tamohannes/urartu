@@ -293,6 +293,8 @@ def _hydra_main(cfg: DictConfig) -> None:
         aim_run.set("cfg", cfg, strict=False)
         if cfg.debug:
             aim_run.add_tag("debug")
+        if cfg.aim.description:
+            aim_run.description = cfg.aim.description
         cfg.aim.hash = aim_run.hash
 
     if cfg.aim.use_aim:
