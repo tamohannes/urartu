@@ -1,8 +1,10 @@
 import sys
+import logging
 from importlib import import_module
 from typing import Dict
 
 from aim import Run
+from urartu.utils.logging import configure_logging
 
 
 class ResumableSlurmJob:
@@ -57,6 +59,8 @@ class ResumableSlurmJob:
         Executes the job action specified in the configuration. Handles the setup of the
         Slurm environment and tracks the job execution within an Aim run if configured.
         """
+        configure_logging()
+        
         import submitit
 
         environment = submitit.JobEnvironment()
@@ -130,6 +134,9 @@ class ResumableJob:
         Executes the job action specified in the configuration. 
         Prefers action classes with run() method over module-level main() function.
         """
+        # Configure logging for consistent output
+        configure_logging()
+        
         sys.path.append(f"{self.module}/actions")
         action_module = import_module(self.action_name)
         

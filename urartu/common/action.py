@@ -7,7 +7,6 @@ import hashlib
 import json
 import pickle
 import time
-import logging
 import gc
 import sys
 import yaml
@@ -15,8 +14,9 @@ from datetime import datetime
 
 from .device import Device
 from urartu.utils.hash import dict_to_8char_hash
+from urartu.utils.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # Keys in the action configuration that do NOT influence the produced outputs

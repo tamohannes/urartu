@@ -14,6 +14,7 @@ from omegaconf import OmegaConf
 
 from urartu.utils.hydra_plugin import UrartuPlugin
 from urartu.utils.launcher import launch, launch_on_slurm, launch_remote
+from urartu.utils.logging import get_logger, configure_logging
 
 Plugins.instance().register(UrartuPlugin)
 
