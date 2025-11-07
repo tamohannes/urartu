@@ -59,7 +59,9 @@ class ResumableSlurmJob:
         Executes the job action specified in the configuration. Handles the setup of the
         Slurm environment and tracks the job execution within an Aim run if configured.
         """
-        configure_logging()
+        # Configure logging with debug flag from config
+        debug_mode = self.cfg.get('debug', False)
+        configure_logging(debug=debug_mode)
         
         import submitit
 
@@ -134,8 +136,9 @@ class ResumableJob:
         Executes the job action specified in the configuration. 
         Prefers action classes with run() method over module-level main() function.
         """
-        # Configure logging for consistent output
-        configure_logging()
+        # Configure logging with debug flag from config
+        debug_mode = self.cfg.get('debug', False)
+        configure_logging(debug=debug_mode)
         
         sys.path.append(f"{self.module}/actions")
         action_module = import_module(self.action_name)

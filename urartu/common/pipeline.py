@@ -6,7 +6,7 @@ manage data flow between steps, and handle configuration overrides.
 """
 
 import logging
-from typing import List, Dict, Any, Optional, Union, Callable
+from typing import List, Dict, Any, Optional, Union, Callable, Tuple
 from pathlib import Path
 import importlib
 import json
@@ -201,6 +201,16 @@ class Pipeline(Action):
         if self.cache_max_age is not None:
             self.cache_max_age = self.cache_max_age * 3600  # Convert to seconds
     
+    def _should_use_aim(self) -> bool:
+        """Check if Aim tracking is enabled."""
+        try:
+            return self.cfg.get('aim', {}).get('use_aim', False)
+        except (AttributeError, KeyError):
+            try:
+                return self.cfg.aim.use_aim
+            except (AttributeError, KeyError):
+                return False
+    
     def _make_serializable(self, obj):
         """Convert OmegaConf objects to regular Python objects for JSON serialization."""
         if OmegaConf.is_config(obj):
@@ -233,13 +243,13 @@ class Pipeline(Action):
             'cache_max_age_days',  # Pipeline-level cache expiry (days)
         }
         
-        logger.info(f"🔧 Pipeline config propagation debug:")
-        logger.info(f"   pipeline_config type: {type(self.pipeline_config)}")
-        logger.info(f"   pipeline_config keys: {list(self.pipeline_config.keys()) if hasattr(self.pipeline_config, 'keys') else 'N/A'}")
+        logger.debug(f"🔧 Pipeline config propagation debug:")
+        logger.debug(f"   pipeline_config type: {type(self.pipeline_config)}")
+        logger.debug(f"   pipeline_config keys: {list(self.pipeline_config.keys()) if hasattr(self.pipeline_config, 'keys') else 'N/A'}")
         if 'device' in self.pipeline_config:
-            logger.info(f"   pipeline_config.device: {self.pipeline_config['device']}")
+            logger.debug(f"   pipeline_config.device: {self.pipeline_config['device']}")
         else:
-            logger.info(f"   device NOT found in pipeline_config")
+            logger.debug(f"   device NOT found in pipeline_config")
         
         # Propagate all pipeline configs except pipeline-specific ones
         for key, value in self.pipeline_config.items():
@@ -250,11 +260,11 @@ class Pipeline(Action):
         if hasattr(self.cfg, 'debug') and 'debug' not in common_configs:
             common_configs['debug'] = self.cfg.debug
             
-        logger.info(f"   common_configs keys: {list(common_configs.keys())}")
+        logger.debug(f"   common_configs keys: {list(common_configs.keys())}")
         if 'device' in common_configs:
-            logger.info(f"   common_configs.device: {common_configs['device']}")
+            logger.debug(f"   common_configs.device: {common_configs['device']}")
         else:
-            logger.info(f"   device NOT found in common_configs")
+            logger.debug(f"   device NOT found in common_configs")
             
         logger.debug(f"Pipeline configs to propagate to actions: {list(common_configs.keys())}")
         return common_configs
@@ -279,17 +289,22 @@ class Pipeline(Action):
         import copy
         config = copy.deepcopy(action_config_dict)
         
+        debug_mode = self.pipeline_config.get('debug', False)
+        
         # Check if this action declares dependencies
         if 'depends_on' not in config:
-            logger.info(f"📝 Action '{current_action_name}' has no dependencies declared")
+            if debug_mode:
+                logger.info(f"📝 No dependencies declared for this action")
             return config
             
-        logger.info(f"🔄 Processing dependencies for action '{current_action_name}'")
+        if debug_mode:
+            logger.info(f"🔄 Processing dependencies for action '{current_action_name}'")
         dependencies = config['depends_on']
         
         # Process each dependency
         for source_action_name, mappings in dependencies.items():
-            logger.info(f"   📤 Processing dependency on '{source_action_name}'")
+            if debug_mode:
+                logger.info(f"   📤 Processing dependency on '{source_action_name}'")
             
             # Check if the source action has completed and produced outputs
             if source_action_name not in self.action_outputs:
@@ -308,7 +323,8 @@ class Pipeline(Action):
                     
                     # Inject the value at the specified config path
                     self._set_nested_config_value(config, config_path, output_value)
-                    logger.info(f"   ✅ Injected {source_action_name}.{output_key} → {config_path} = {output_value}")
+                    if debug_mode:
+                        logger.info(f"   ✅ Injected {source_action_name}.{output_key} → {config_path} = {output_value}")
                 else:
                     logger.warning(f"   ❌ Output '{output_key}' not found in {source_action_name} outputs")
                     logger.warning(f"       Available outputs: {list(source_outputs.keys())}")
@@ -472,11 +488,140 @@ class Pipeline(Action):
                 
         return outputs
         
+    def _print_pipeline_status(self, all_actions: List[PipelineAction], statuses: Dict[str, Dict], current_index: int):
+        """
+        Print a clean, colorful status view of pipeline progress.
+        
+        Args:
+            all_actions: List of all pipeline actions
+            statuses: Dict mapping action names to their status
+            current_index: Index of currently completed action (1-based)
+        """
+        import re
+        
+        # ANSI color codes
+        GREEN = '\033[92m'      # Bright green for completed
+        BLUE = '\033[94m'       # Bright blue for cached
+        GRAY = '\033[90m'       # Gray for pending
+        BOLD = '\033[1m'        # Bold text
+        RESET = '\033[0m'       # Reset to default
+        
+        # Helper function to calculate display width
+        def display_width(text):
+            """Calculate display width accounting for ANSI codes and emoji width"""
+            # Strip ANSI codes
+            ansi_pattern = re.compile(r'\033\[[0-9;]*m')
+            clean_text = ansi_pattern.sub('', text)
+            
+            # Try to use wcwidth library if available
+            try:
+                import wcwidth
+                return wcwidth.wcswidth(clean_text)
+            except ImportError:
+                pass
+            
+            # Fallback: Our specific emojis (all are 2 columns wide in terminal)
+            wide_chars = {
+                '✅',  # U+2705 White Heavy Check Mark
+                '✨',  # U+2728 Sparkles
+                '💾',  # U+1F4BE Floppy Disk
+                '🚀',  # U+1F680 Rocket
+                '📊',  # U+1F4CA Bar Chart
+                '⭕',  # U+2B55 Hollow Red Circle
+            }
+            
+            # Calculate width
+            width = 0
+            for char in clean_text:
+                if char in wide_chars:
+                    width += 2
+                else:
+                    width += 1
+            return width
+        
+        # Get experiment name
+        experiment_name = self.pipeline_config.get('experiment_name', 'Pipeline')
+        total_actions = len(all_actions)
+        
+        # Clear line
+        print("\r" + " " * 100 + "\r", end='')
+        
+        # Horizontal separator
+        separator = "═" * 80
+        
+        # Title with experiment name
+        title_text = f"🚀 {experiment_name}"
+        title_width = display_width(title_text)
+        title_padding_left = (80 - title_width) // 2
+        title_padding_right = 80 - title_width - title_padding_left
+        title_line = f"{' ' * title_padding_left}{BOLD}{title_text}{RESET}{' ' * title_padding_right}"
+        
+        # Progress counter
+        progress_text = f"📊 Progress: {current_index}/{total_actions} actions"
+        progress_width = display_width(progress_text)
+        progress_padding_left = (80 - progress_width) // 2
+        progress_padding_right = 80 - progress_width - progress_padding_left
+        progress_line = f"{' ' * progress_padding_left}{progress_text}{' ' * progress_padding_right}"
+        
+        status_lines = [
+            f"\n{BOLD}{separator}{RESET}",
+            title_line,
+            progress_line,
+            f"{BOLD}{separator}{RESET}",
+        ]
+        
+        # Action status lines
+        for i, action in enumerate(all_actions):
+            if i < current_index:
+                # Completed action
+                status = statuses.get(action.name, {})
+                if status.get('cached', False):
+                    # Loaded from cache - blue with disk emoji
+                    line = f"  {BLUE}✅ {action.name} 💾 (from cache){RESET}"
+                else:
+                    # Freshly executed - green with sparkles
+                    line = f"  {GREEN}✅ {action.name} ✨ (executed){RESET}"
+            else:
+                # Pending - gray
+                line = f"  {GRAY}⭕ {action.name} (pending){RESET}"
+            
+            status_lines.append(line)
+        
+        status_lines.append(f"{BOLD}{separator}{RESET}")
+        
+        # Print all status lines
+        print("\n".join(status_lines))
+        print()  # Empty line for spacing
+    
+    def _run_action_with_status(self, pipeline_action: PipelineAction) -> Tuple[ActionOutput, bool]:
+        """
+        Execute a single pipeline action and return its output with cache status.
+        
+        Returns:
+            Tuple of (ActionOutput, was_cached: bool)
+        """
+        # Track if cache was used
+        was_cached = False
+        
+        # Log action start
+        logger.debug(f"\n{'='*80}")
+        logger.debug(f"Running pipeline action: {pipeline_action.name} (action: {pipeline_action.action_name})")
+        logger.debug(f"{'='*80}")
+        
+        # Get the action output (will check cache internally)
+        action_output = self._run_action(pipeline_action)
+        
+        # Check if it came from cache
+        if hasattr(action_output, 'metadata') and action_output.metadata.get('from_cache', False):
+            was_cached = True
+        
+        return action_output, was_cached
+    
     def _run_action(self, pipeline_action: PipelineAction) -> ActionOutput:
         """Execute a single pipeline action."""
-        logger.info(f"\n{'='*80}")
-        logger.info(f"Running pipeline action: {pipeline_action.name} (action: {pipeline_action.action_name})")
-        logger.info(f"{'='*80}")
+        logger.debug(f"\n{'='*80}")
+        logger.debug(f"Running pipeline action: {pipeline_action.name} (action: {pipeline_action.action_name})")
+        logger.debug(f"{'='*80}")
         
         # Check if action should run
         context = {"action_outputs": self.action_outputs}
@@ -488,10 +633,13 @@ class Pipeline(Action):
                 metadata={"skipped": True}
             )
         
+        debug_mode = self.pipeline_config.get('debug', False)
+        
         # DEBUG: Log available action outputs before resolution
-        logger.info(f"🔍 DEBUG: Available action_outputs before resolution: {list(self.action_outputs.keys())}")
-        for name, output in self.action_outputs.items():
-            logger.info(f"   - {name}: outputs={list(output.outputs.keys()) if output.outputs else 'None'}")
+        if debug_mode:
+            logger.info(f"🔍 DEBUG: Available action_outputs before resolution: {list(self.action_outputs.keys())}")
+            for name, output in self.action_outputs.items():
+                logger.info(f"   - {name}: outputs={list(output.outputs.keys()) if output.outputs else 'None'}")
         
         # DEBUG: Write to file
         debug_file = Path(self.cfg.run_dir) / "pipeline_debug.txt"
@@ -505,9 +653,11 @@ class Pipeline(Action):
         
         # Resolve config overrides to handle any references
         context = {"action_outputs": self.action_outputs}
-        logger.info(f"🔍 DEBUG: Config overrides before resolution: {pipeline_action.config_overrides}")
+        if debug_mode:
+            logger.info(f"🔍 DEBUG: Config overrides before resolution: {pipeline_action.config_overrides}")
         resolved_config_overrides = self._resolve_value(pipeline_action.config_overrides, context)
-        logger.info(f"🔍 DEBUG: Config overrides after resolution: {resolved_config_overrides}")
+        if debug_mode:
+            logger.info(f"🔍 DEBUG: Config overrides after resolution: {resolved_config_overrides}")
         
         # DEBUG: Write resolution result to file
         with open(debug_file, "a") as f:
@@ -536,7 +686,8 @@ class Pipeline(Action):
         
         # Get pipeline config hash to ensure cache invalidation when pipeline config changes
         pipeline_config_hash = self._get_config_hash()
-        logger.info(f"🔑 Adding pipeline config hash to action config: {pipeline_config_hash}")
+        if debug_mode:
+            logger.info(f"🔑 Adding pipeline config hash to action config: {pipeline_config_hash}")
         
         # Apply config overrides by creating proper action config structure
         if pipeline_action.config_overrides:
@@ -549,18 +700,19 @@ class Pipeline(Action):
             # Propagate common pipeline-level configs to individual actions
             pipeline_common_configs = self._get_common_pipeline_configs()
             
-            logger.info(f"🔧 Config merge debug for '{pipeline_action.name}':")
-            logger.info(f"   action_config_dict type: {type(action_config_dict)}")
-            if 'device' in action_config_dict:
-                logger.info(f"   action_config_dict.device: {action_config_dict['device']}")
-            else:
-                logger.info(f"   device NOT found in action_config_dict")
-            
-            # Log any dependencies that were processed
-            if 'depends_on' in resolved_config_overrides:
-                logger.info(f"   🔗 Dependencies declared: {list(resolved_config_overrides['depends_on'].keys())}")
-            else:
-                logger.info(f"   📝 No dependencies declared for this action")
+            if debug_mode:
+                logger.info(f"🔧 Config merge debug for '{pipeline_action.name}':")
+                logger.info(f"   action_config_dict type: {type(action_config_dict)}")
+                if 'device' in action_config_dict:
+                    logger.info(f"   action_config_dict.device: {action_config_dict['device']}")
+                else:
+                    logger.info(f"   device NOT found in action_config_dict")
+                
+                # Log any dependencies that were processed
+                if 'depends_on' in resolved_config_overrides:
+                    logger.info(f"   🔗 Dependencies declared: {list(resolved_config_overrides['depends_on'].keys())}")
+                else:
+                    logger.info(f"   📝 No dependencies declared for this action")
             
             # Merge pipeline common configs with action-specific configs
             # Action-specific configs take precedence over pipeline configs
@@ -572,21 +724,23 @@ class Pipeline(Action):
             
             # Add pipeline config hash to ensure cache invalidation when pipeline config changes
             merged_config.pipeline_config_hash = pipeline_config_hash
-            logger.info(f"🔑 Added pipeline config hash {pipeline_config_hash} to action '{pipeline_action.name}'")
-            
-            logger.info(f"   merged_config type: {type(merged_config)}")
-            if 'device' in merged_config:
-                logger.info(f"   merged_config.device: {merged_config['device']}")
-            else:
-                logger.info(f"   device NOT found in merged_config")
-            
-            # Log config override details
-            overridden_keys = set(pipeline_common_configs.keys()) & set(action_config_dict.keys())
-            if overridden_keys:
-                logger.info(f"Action '{pipeline_action.name}' overrides pipeline configs: {list(overridden_keys)}")
+            if debug_mode:
+                logger.info(f"🔑 Added pipeline config hash {pipeline_config_hash} to action '{pipeline_action.name}'")
+                
+                logger.info(f"   merged_config type: {type(merged_config)}")
+                if 'device' in merged_config:
+                    logger.info(f"   merged_config.device: {merged_config['device']}")
+                else:
+                    logger.info(f"   device NOT found in merged_config")
+                
+                # Log config override details
+                overridden_keys = set(pipeline_common_configs.keys()) & set(action_config_dict.keys())
+                if overridden_keys:
+                    logger.info(f"Action '{pipeline_action.name}' overrides pipeline configs: {list(overridden_keys)}")
             
             action_cfg.action_config = merged_config  # Set the action configuration
-            logger.info(f"Applied config overrides with pipeline common configs for {pipeline_action.name}")
+            if debug_mode:
+                logger.info(f"Applied config overrides with pipeline common configs for {pipeline_action.name}")
         else:
             # Even if no overrides, apply common pipeline configs
             pipeline_common_configs = self._get_common_pipeline_configs()
@@ -594,29 +748,33 @@ class Pipeline(Action):
             
             # Add pipeline config hash even for actions without overrides
             base_config.pipeline_config_hash = pipeline_config_hash
-            logger.info(f"🔑 Added pipeline config hash {pipeline_config_hash} to action '{pipeline_action.name}'")
+            if debug_mode:
+                logger.info(f"🔑 Added pipeline config hash {pipeline_config_hash} to action '{pipeline_action.name}'")
             
             action_cfg.action_config = base_config  # Set the action configuration
             
-            logger.info(f"🔧 No action overrides for '{pipeline_action.name}' - using pipeline configs:")
-            if 'device' in pipeline_common_configs:
-                logger.info(f"   pipeline device will be used: {pipeline_common_configs['device']}")
-            else:
-                logger.info(f"   No device in pipeline_common_configs - will default to 'auto'")
-            
-            logger.info(f"Applied pipeline common configs for {pipeline_action.name}")
+            if debug_mode:
+                logger.info(f"🔧 No action overrides for '{pipeline_action.name}' - using pipeline configs:")
+                if 'device' in pipeline_common_configs:
+                    logger.info(f"   pipeline device will be used: {pipeline_common_configs['device']}")
+                else:
+                    logger.info(f"   No device in pipeline_common_configs - will default to 'auto'")
+                
+                logger.info(f"Applied pipeline common configs for {pipeline_action.name}")
         
         # Create a sub-context in Aim for this action
-        # Track action metadata
-        self.aim_run[f"pipeline_action_{pipeline_action.name}_config"] = {
-            "action": pipeline_action.action_name,
-            "overrides": pipeline_action.config_overrides
-        }
+        # Track action metadata (only if Aim is enabled)
+        if self._should_use_aim():
+            self.aim_run[f"pipeline_action_{pipeline_action.name}_config"] = {
+                "action": pipeline_action.action_name,
+                "overrides": pipeline_action.config_overrides
+            }
         
         # Try to find action class - look for classes that inherit from Action
         action_class = None
         action_instance = None  # Initialize to None
         action_candidates = []
+        was_cached = False  # Track whether action used cache
         
         for attr_name in dir(action_module):
             attr = getattr(action_module, attr_name)
@@ -655,15 +813,20 @@ class Pipeline(Action):
             
             # Extract outputs
             outputs = self._extract_outputs(pipeline_action, action_instance)
-            logger.info(f"🔍 DEBUG: Extracted outputs from {pipeline_action.name}: {list(outputs.keys()) if outputs else 'None'}")
-            if outputs:
-                for key, value in outputs.items():
-                    logger.info(f"   - {key}: {str(value)[:100]}")
+            if debug_mode:
+                logger.info(f"🔍 DEBUG: Extracted outputs from {pipeline_action.name}: {list(outputs.keys()) if outputs else 'None'}")
+                if outputs:
+                    for key, value in outputs.items():
+                        logger.info(f"   - {key}: {str(value)[:100]}")
             
-            # Ensure we have outputs even from cached actions
-            if not outputs and hasattr(action_instance, '_cached_outputs') and action_instance._cached_outputs:
-                outputs = action_instance._cached_outputs
-                logger.info(f"📤 Using cached outputs for pipeline action {pipeline_action.name}: {list(outputs.keys()) if outputs else 'None'}")
+            # Check if action loaded from cache
+            if hasattr(action_instance, '_cached_outputs') and action_instance._cached_outputs:
+                was_cached = True
+                # Ensure we have outputs even from cached actions
+                if not outputs:
+                    outputs = action_instance._cached_outputs
+                    if debug_mode:
+                        logger.info(f"📤 Using cached outputs for pipeline action {pipeline_action.name}: {list(outputs.keys()) if outputs else 'None'}")
         elif hasattr(action_module, 'main'):
             # Fallback to module-level main function
             action_module.main(cfg=action_cfg, aim_run=self.aim_run)
@@ -671,15 +834,18 @@ class Pipeline(Action):
         else:
             raise AttributeError(f"Action {pipeline_action.action_name} has no Action class or main() function")
         
+        # Automatically convert paths to portable format before storing outputs
+        portable_outputs = Action._make_outputs_portable(outputs)
+        
         action_output = ActionOutput(
             name=pipeline_action.name,
             action_name=pipeline_action.action_name,
-            outputs=outputs,
-            metadata={"completed": True}
+            outputs=portable_outputs,
+            metadata={"completed": True, "from_cache": was_cached}
         )
         
-        # Track outputs in Aim
-        if outputs:
+        # Track outputs in Aim (only if Aim is enabled)
+        if self._should_use_aim() and outputs:
             self.aim_run[f"pipeline_action_{pipeline_action.name}_outputs"] = outputs
         
         # Clean up memory after action completes
@@ -699,10 +865,10 @@ class Pipeline(Action):
 
         # Load actions from configuration ONLY if not already added by subclass
         # This allows subclasses to programmatically define actions with custom logic
-        logger.info(f"🔍 Pipeline.initialize(): self.actions = {len(self.actions)} items")
-        logger.info(f"🔍 Pipeline.initialize(): 'actions' in pipeline_config = {'actions' in self.pipeline_config}")
+        logger.debug(f"🔍 Pipeline.initialize(): self.actions = {len(self.actions)} items")
+        logger.debug(f"🔍 Pipeline.initialize(): 'actions' in pipeline_config = {'actions' in self.pipeline_config}")
         if not self.actions and 'actions' in self.pipeline_config:
-            logger.info("📥 Loading actions from YAML configuration")
+            logger.debug("📥 Loading actions from YAML configuration")
             # Load actions from YAML configuration
             for action_cfg in self.pipeline_config.actions:
                 # Get all config except metadata keys
@@ -718,14 +884,14 @@ class Pipeline(Action):
                 )
                 self.add_action(action)
                     
-        logger.info(f"Pipeline initialized with {len(self.actions)} actions")
+        logger.debug(f"Pipeline initialized with {len(self.actions)} actions")
         
         # Validate all actions exist
         for action in self.actions:
             action_path = Path("actions") / f"{action.action_name}.py"
             if not action_path.exists():
                 raise FileNotFoundError(f"Action file not found: {action_path}")
-            logger.info(f"  ✓ Action '{action.name}': {action.action_name}")
+            logger.debug(f"  ✓ Action '{action.name}': {action.action_name}")
             
         self._initialized = True
         
@@ -733,10 +899,22 @@ class Pipeline(Action):
         """Execute the pipeline by running all actions in sequence."""
         if not self._initialized:
             self.initialize()
-            
-        logger.info(f"\nStarting pipeline execution with {len(self.actions)} actions")
+        
+        # Check debug mode
+        debug_mode = self.pipeline_config.get('debug', False)
+        
+        # In debug mode, show verbose header
+        if debug_mode:
+            logger.debug(f"\nStarting pipeline execution with {len(self.actions)} actions")
         
         successful_actions = 0
+        # Track action statuses for clean display
+        action_statuses = {}  # {action_name: {'cached': bool, 'completed': bool}}
+        
+        # Show initial progress box (all actions pending)
+        if not debug_mode:
+            self._print_pipeline_status(self.actions, action_statuses, 0)
+        
         # DEBUG: Write to file for debugging
         debug_file = Path(self.cfg.run_dir) / "pipeline_debug.txt"
         debug_file.parent.mkdir(parents=True, exist_ok=True)
@@ -747,18 +925,23 @@ class Pipeline(Action):
         
         for i, action in enumerate(self.actions):
             try:
-                # Run the action
-                action_output = self._run_action(action)
+                # Run the action (it will return metadata about cache usage)
+                action_output, was_cached = self._run_action_with_status(action)
                 
                 # Store output for use by later actions
                 self.action_outputs[action.name] = action_output
-                logger.info(f"🔍 DEBUG: Stored outputs for '{action.name}' in action_outputs")
-                logger.info(f"🔍 DEBUG: action_outputs keys are now: {list(self.action_outputs.keys())}")
-                logger.info(f"🔍 DEBUG: Outputs for '{action.name}': {list(action_output.outputs.keys()) if action_output.outputs else 'None'}")
+                action_statuses[action.name] = {'cached': was_cached, 'completed': True}
                 
-                # DEBUG: Write to file
+                # Debug mode: show detailed info
+                if debug_mode:
+                    logger.info(f"🔍 DEBUG: Stored outputs for '{action.name}' in action_outputs")
+                    logger.info(f"🔍 DEBUG: action_outputs keys are now: {list(self.action_outputs.keys())}")
+                    logger.info(f"🔍 DEBUG: Outputs for '{action.name}': {list(action_output.outputs.keys()) if action_output.outputs else 'None'}")
+                
+                # Write debug info to file
                 with open(debug_file, "a") as f:
                     f.write(f"\nAction {i+1}: {action.name}\n")
+                    f.write(f"  Cached: {was_cached}\n")
                     f.write(f"  Outputs: {list(action_output.outputs.keys()) if action_output.outputs else 'None'}\n")
                     if action_output.outputs:
                         for key, value in action_output.outputs.items():
@@ -767,26 +950,39 @@ class Pipeline(Action):
                 
                 if not action_output.metadata.get("skipped", False):
                     successful_actions += 1
-                    
-                logger.info(f"Completed action {i+1}/{len(self.actions)}: {action.name}")
+                
+                # Clean mode: show progress status
+                if not debug_mode:
+                    self._print_pipeline_status(self.actions, action_statuses, i + 1)
+                else:
+                    logger.info(f"Completed action {i+1}/{len(self.actions)}: {action.name}")
                 
             except Exception as e:
                 logger.error(f"Failed at action '{action.name}': {str(e)}")
-                self.aim_run[f"pipeline_action_{action.name}_error"] = str(e)
-                self.aim_run["pipeline_failed_at_action"] = action.name
+                # Track error in Aim (only if Aim is enabled)
+                if self._should_use_aim():
+                    self.aim_run[f"pipeline_action_{action.name}_error"] = str(e)
+                    self.aim_run["pipeline_failed_at_action"] = action.name
                 raise
-                
-        logger.info("\n" + "="*80)
-        logger.info(f"Pipeline completed successfully! Executed {successful_actions} actions.")
-        logger.info("="*80)
         
-        # Save final summary
-        self.aim_run["pipeline_summary"] = {
-            "total_actions": len(self.actions),
-            "successful_actions": successful_actions,
-            "action_names": [action.name for action in self.actions],
-            "outputs": {name: output.outputs for name, output in self.action_outputs.items()}
-        }
+        # Final status - show final progress box with all completed
+        if not debug_mode:
+            # Show final progress box
+            self._print_pipeline_status(self.actions, action_statuses, len(self.actions))
+            logger.info(f"✅ Pipeline completed successfully!")
+        else:
+            logger.info("\n" + "="*80)
+            logger.info(f"Pipeline completed successfully! Executed {successful_actions} actions.")
+            logger.info("="*80)
+        
+        # Save final summary (only if Aim is enabled)
+        if self._should_use_aim():
+            self.aim_run["pipeline_summary"] = {
+                "total_actions": len(self.actions),
+                "successful_actions": successful_actions,
+                "action_names": [action.name for action in self.actions],
+                "outputs": {name: output.outputs for name, output in self.action_outputs.items()}
+            }
         
     def _get_config_hash(self) -> str:
         """

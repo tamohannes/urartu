@@ -50,13 +50,17 @@ def configure_tqdm_once():
         pass
 
 
-def configure_logging_once():
+def configure_logging_once(debug: bool = False):
     """
     Configure logging to output to stdout/stderr with immediate flushing.
     - INFO, DEBUG, WARNING logs go to stdout (.out files)
     - ERROR, CRITICAL logs go to stderr (.err files)
     
     Also configures tqdm to write to stdout for consistency.
+    
+    Args:
+        debug: If True, set logging level to DEBUG to show verbose messages.
+               If False, set to INFO to show only important messages.
     
     This function is idempotent - it only configures once even if called multiple times.
     """
@@ -82,7 +86,8 @@ def configure_logging_once():
     
     # Configure root logger
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
+    # Set level based on debug flag: DEBUG shows everything, INFO shows only important messages
+    root_logger.setLevel(logging.DEBUG if debug else logging.INFO)
     
     # Remove all existing handlers to avoid duplicates
     for handler in root_logger.handlers[:]:

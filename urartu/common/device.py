@@ -38,7 +38,7 @@ class Device:
         else:
             Device.DEVICE = torch.device("cpu")
 
-        logging.info(f"Using DEVICE: {Device.DEVICE}")
+        logging.debug(f"Using DEVICE: {Device.DEVICE}")
 
     @staticmethod
     def get_device():

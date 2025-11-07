@@ -43,18 +43,24 @@ class ModelForCausalLM(Model):
             An instance of AutoModelForCausalLM ready for inference.
         """
         if self._model is None:
+            # Collect kwargs for from_pretrained
+            from_pretrained_kwargs = {
+                "cache_dir": self.cfg.get("cache_dir"),
+                "device_map": Device.get_device(),
+                "token": self.cfg.get("api_token"),
+                "trust_remote_code": self.cfg.get("trust_remote_code"),
+                "revision": self.cfg.get("revision"),
+            }
+            # Add dtype if specified
+            if self.cfg.get("dtype") is not None:
+                from_pretrained_kwargs["torch_dtype"] = eval_dtype(self.cfg.get("dtype"))
+            # Add attn_implementation if specified (needed for attention weight extraction)
+            if self.cfg.get("attn_implementation") is not None:
+                from_pretrained_kwargs["attn_implementation"] = self.cfg.get("attn_implementation")
+            
             self._model = AutoModelForCausalLM.from_pretrained(
                 self.cfg.name,
-                cache_dir=self.cfg.get("cache_dir"),
-                device_map=Device.get_device(),
-                torch_dtype=(
-                    eval_dtype(self.cfg.get("dtype"))
-                    if self.cfg.get("dtype") is not None
-                    else None
-                ),
-                token=self.cfg.get("api_token"),
-                trust_remote_code=self.cfg.get("trust_remote_code"),
-                revision=self.cfg.get("revision"),
+                **from_pretrained_kwargs
             )
             for param in self._model.parameters():
                 param.requires_grad = False
