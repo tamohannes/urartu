@@ -281,6 +281,16 @@ def _hydra_main(cfg: DictConfig) -> None:
             run_dir = Path(*parts)
         os.makedirs(run_dir, exist_ok=True)
 
+    # Handle description field (general field, not AIM-specific)
+    # Prefer general description field, fall back to description and cfg.aim.description for backward compatibility
+    description = None
+    if hasattr(cfg, 'descr') and cfg.descr:
+        description = cfg.descr
+    elif hasattr(cfg, 'description') and cfg.description:
+        description = cfg.description
+    elif hasattr(cfg, 'aim') and hasattr(cfg.aim, 'description') and cfg.aim.description:
+        description = cfg.aim.description
+
     aim_run = None
     if cfg.aim.use_aim:
         # Get experiment name from action config
@@ -294,8 +304,9 @@ def _hydra_main(cfg: DictConfig) -> None:
         aim_run.set("cfg", cfg, strict=False)
         if cfg.debug:
             aim_run.add_tag("debug")
-        if cfg.aim.description:
-            aim_run.description = cfg.aim.description
+        # Set AIM description if description is provided
+        if description:
+            aim_run.description = description
         cfg.aim.hash = aim_run.hash
 
     if cfg.aim.use_aim:
@@ -311,6 +322,10 @@ def _hydra_main(cfg: DictConfig) -> None:
     file_handler.setFormatter(formatter)
     stream_handler.setFormatter(formatter)
     root_logger.handlers = [file_handler, stream_handler]
+    
+    # Log description if provided (appears in both console and log file)
+    if description:
+        logging.info(f"📝 Description: {description}")
 
     class TeeHandler:
         def __init__(self, filename, stream):
