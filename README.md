@@ -33,7 +33,9 @@ Welcome to Urartu, the revolutionary framework that transforms how you build mac
 
 With a `.yaml` file-based configuration system and seamless `slurm` job submission capabilities on clusters, Urartu removes the technical hassle so you can focus on building impactful ML workflows! 🚀
 
-<img width="2570" height="1053" alt="urartu_schema" src="https://github.com/user-attachments/assets/4120028b-d982-4c36-89de-14d346954201" />
+<img width="1721" height="593" alt="urartu_teaser" src="https://github.com/user-attachments/assets/2a471159-6783-4b58-ad5c-508de352a054" />
+
+<!-- <img width="2570" height="1053" alt="urartu_schema" src="https://github.com/user-attachments/assets/4120028b-d982-4c36-89de-14d346954201" /> -->
 
 # **Installation**
 
