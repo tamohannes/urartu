@@ -1,0 +1,8 @@
+# @package _global_
+# Default pipeline configuration
+# This is a placeholder - actual pipeline configs should be in project configs/pipeline/
+
+pipeline:
+  experiment_name: ???
+  device: ???
+

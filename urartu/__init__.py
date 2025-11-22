@@ -203,18 +203,21 @@ def parse_command_args(args: List[str]) -> dict:
 def main():
     """Main entry point for the package."""
     if len(sys.argv) == 1 or (len(sys.argv) == 2 and sys.argv[1] in ["--help", "-h"]):
-        print("""Usage: urartu action_config=ACTION_NAME [other_params]
+        print("""Usage: urartu action=ACTION_NAME [other_params]
+       urartu pipeline=PIPELINE_NAME [other_params]
 
 Required arguments:
-  action_config=ACTION_NAME    Name of the action to run (must exist in actions/ directory)
+  action=ACTION_NAME          Name of the action to run (must exist in actions/ directory)
+  pipeline=PIPELINE_NAME      Name of the pipeline to run (must exist in pipelines/ directory)
 
 Optional arguments:
   debug=true                  Run in debug mode
   slurm.use_slurm=true       Run on SLURM cluster
   aim.use_aim=true           Use Aim for experiment tracking
 
-Example:
-  urartu action_config=generate aim=aim slurm=slurm
+Examples:
+  urartu action=generate aim=aim slurm=slurm
+  urartu pipeline=my_pipeline aim=aim slurm=slurm
 """)
         return
 
@@ -226,12 +229,6 @@ Example:
 def _hydra_main(cfg: DictConfig) -> None:
     """Hydra main function for running experiments."""
     hydra_cfg = HydraConfig.get()
-    cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True, enum_to_str=True))
-
-    if cfg.machine.type == "remote":
-        launch_remote(cfg=cfg)
-        return
-
     cwd = Path.cwd()
 
     # Verify current directory is a Python module
@@ -252,22 +249,257 @@ def _hydra_main(cfg: DictConfig) -> None:
         )
         raise FileNotFoundError("Missing 'actions' directory.")
 
-    # Verify specific action file exists
-    # action_name is the identifier for the action to run
-    if not hasattr(cfg, 'action_name') or cfg.action_name is None:
-        raise ValueError("Config must specify 'action_name' to identify the action to run")
+    # Note: pipeline=name and action=name are config groups, not entity name shorthands.
+    # Users should use pipeline_name=name and action_name=name to specify entity names.
+    # However, if pipeline or action are strings (not dicts), they might be from command line overrides.
+    # In that case, we treat them as entity names for backward compatibility.
+    # Use OmegaConf.select() to safely check values without triggering resolution
+    try:
+        pipeline_val = OmegaConf.select(cfg, 'pipeline', default=None)
+        if isinstance(pipeline_val, str) and pipeline_val not in ['???', 'default_pipeline', None]:
+            # Check if this is a config file that exists
+            pipeline_config_path = cwd.joinpath("configs", "pipeline", f"{pipeline_val}.yaml")
+            if not pipeline_config_path.exists():
+                # Not a config file, treat as entity name (backward compatibility)
+                cfg.pipeline_name = pipeline_val
+                # Reset to default pipeline config
+                try:
+                    default_pipeline_path = Path(__file__).parent.parent / "config" / "pipeline" / "default_pipeline.yaml"
+                    if default_pipeline_path.exists():
+                        default_cfg = OmegaConf.load(default_pipeline_path)
+                        cfg.pipeline = default_cfg.get('pipeline', {})
+                except Exception:
+                    try:
+                        cfg.pipeline = {}
+                    except Exception:
+                        pass
+    except Exception:
+        pass
     
-    action_file_path = cwd.joinpath("actions", f"{cfg.action_name}.py")
-    if action_file_path.exists():
+    try:
+        action_val = OmegaConf.select(cfg, 'action', default=None)
+        if isinstance(action_val, str) and action_val not in ['???', 'default_action', None]:
+            # Check if this is a config file that exists
+            action_config_path = cwd.joinpath("configs", "action", f"{action_val}.yaml")
+            if not action_config_path.exists():
+                # Not a config file, treat as entity name (backward compatibility)
+                cfg.action_name = action_val
+                # Reset to default action config
+                try:
+                    default_action_path = Path(__file__).parent.parent / "config" / "action" / "default_action.yaml"
+                    if default_action_path.exists():
+                        default_cfg = OmegaConf.load(default_action_path)
+                        cfg.action = default_cfg.get('action', {})
+                except Exception:
+                    try:
+                        cfg.action = {}
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    
+    # Verify specific action or pipeline file exists
+    # Determine entity name - can be action_name or pipeline_name
+    entity_name = None
+    entity_type = None
+    
+    # Check for pipeline_name first (pipelines use pipeline_name)
+    # Use OmegaConf.select() to safely check values without triggering resolution
+    entity_name = None
+    entity_type = None
+    
+    try:
+        pipeline_name_val = OmegaConf.select(cfg, 'pipeline_name', default=None)
+        if pipeline_name_val is not None and pipeline_name_val != '???':
+            entity_name = pipeline_name_val
+            entity_type = 'pipeline'
+    except Exception:
+        pass
+    
+    # Fall back to action_name (actions use action_name, or legacy support)
+    if entity_name is None:
+        try:
+            action_name_val = OmegaConf.select(cfg, 'action_name', default=None)
+            if action_name_val is not None and action_name_val != '???':
+                entity_name = action_name_val
+                entity_type = 'action'  # Will be determined by file existence
+        except Exception:
+            pass
+    
+    if entity_name is None:
+        raise ValueError(
+            "Config must specify either 'action_name' (for actions) or 'pipeline_name' (for pipelines) "
+            "to identify the entity to run"
+        )
+    
+    # Check if it's a pipeline (in pipelines/ directory) or action (in actions/ directory)
+    pipeline_file_path = cwd.joinpath("pipelines", f"{entity_name}.py")
+    action_file_path = cwd.joinpath("actions", f"{entity_name}.py")
+    
+    is_pipeline = pipeline_file_path.exists()
+    is_action = action_file_path.exists()
+    
+    # Update entity_type based on actual file existence
+    if is_pipeline:
+        entity_type = 'pipeline'
+        # Set pipeline_name if not already set
+        try:
+            pipeline_name_val = OmegaConf.select(cfg, 'pipeline_name', default=None)
+            if pipeline_name_val is None or pipeline_name_val == '???':
+                cfg.pipeline_name = entity_name
+        except Exception:
+            cfg.pipeline_name = entity_name
+    elif is_action:
+        entity_type = 'action'
+        # Set action_name if not already set
+        try:
+            action_name_val = OmegaConf.select(cfg, 'action_name', default=None)
+            if action_name_val is None or action_name_val == '???':
+                cfg.action_name = entity_name
+        except Exception:
+            cfg.action_name = entity_name
+    
+    if is_pipeline:
+        logging.info(
+            f"The pipeline file '{pipeline_file_path}' is located and is ready to be used!"
+        )
+        # Check if pipeline config exists and load it from pipeline directory
+        pipeline_name = getattr(cfg, 'pipeline_name', entity_name)
+        pipeline_config_path = cwd.joinpath("configs", "pipeline", f"{pipeline_name}.yaml")
+        if pipeline_config_path.exists():
+            logging.info(f"📋 Loading pipeline config from: {pipeline_config_path}")
+            # Load pipeline config (Hydra will handle defaults via search path)
+            pipeline_cfg = OmegaConf.load(pipeline_config_path)
+            
+            # Merge pipeline section
+            # Note: OmegaConf.merge(base, override) - override takes precedence
+            # We want the loaded config to override defaults, so put defaults first
+            if 'pipeline' in pipeline_cfg:
+                # Get current pipeline config (might be from defaults)
+                current_pipeline = cfg.get('pipeline', {})
+                if not current_pipeline:
+                    current_pipeline = {}
+                # Merge: defaults first, then loaded config (loaded config overrides defaults)
+                merged_pipeline = OmegaConf.merge(
+                    OmegaConf.create(current_pipeline) if not isinstance(current_pipeline, DictConfig) else current_pipeline,
+                    pipeline_cfg.pipeline
+                )
+                cfg.pipeline = merged_pipeline
+                logging.info(f"📋 Merged pipeline config with {len(merged_pipeline.get('actions', []))} actions")
+            
+            # Merge other top-level keys (like pipeline_name, debug, etc.)
+            for key in pipeline_cfg:
+                if key not in ['pipeline', 'defaults']:
+                    # Special handling for pipeline_name
+                    if key == 'pipeline_name':
+                        cfg.pipeline_name = pipeline_cfg[key]
+                    # Only override if the value in main config is None or missing
+                    elif not hasattr(cfg, key) or cfg[key] is None:
+                        cfg[key] = pipeline_cfg[key]
+                    # Or if the pipeline config explicitly sets it (non-None value)
+                    elif pipeline_cfg[key] is not None:
+                        cfg[key] = pipeline_cfg[key]
+        else:
+            logging.warning(
+                f"⚠️  Pipeline config not found at {pipeline_config_path}. "
+                f"Using default pipeline configuration."
+            )
+    elif is_action:
         logging.info(
             f"The action file '{action_file_path}' is located and is ready to be used!"
         )
+        # Check if action config exists and load it from action directory
+        action_name = getattr(cfg, 'action_name', entity_name)
+        action_config_path = cwd.joinpath("configs", "action", f"{action_name}.yaml")
+        if action_config_path.exists():
+            logging.info(f"📋 Loading action config from: {action_config_path}")
+            # Load action config (Hydra will handle defaults via search path)
+            action_cfg = OmegaConf.load(action_config_path)
+            
+            # Merge action section
+            if 'action' in action_cfg:
+                cfg.action = OmegaConf.merge(cfg.action, action_cfg.action)
+            
+            # Merge other top-level keys (like action_name, debug, etc.)
+            for key in action_cfg:
+                if key not in ['action', 'defaults']:
+                    # Special handling for action_name
+                    if key == 'action_name':
+                        cfg.action_name = action_cfg[key]
+                    # Only override if the value in main config is None or missing
+                    elif not hasattr(cfg, key) or cfg[key] is None:
+                        cfg[key] = action_cfg[key]
+                    # Or if the action config explicitly sets it (non-None value)
+                    elif action_cfg[key] is not None:
+                        cfg[key] = action_cfg[key]
+        else:
+            logging.warning(
+                f"⚠️  Action config not found at {action_config_path}. "
+                f"Using default action configuration."
+            )
     else:
         logging.error(
-            f"The action file '{action_file_path}' does not exist."
-            " Please ensure that the file is correctly named and located in the 'actions' directory."
+            f"Neither action nor pipeline file found for '{entity_name}'."
+            f" Checked: {action_file_path} and {pipeline_file_path}."
+            " Please ensure that the file exists in either the 'actions' or 'pipelines' directory."
         )
-        raise FileNotFoundError("Missing action file.")
+        raise FileNotFoundError("Missing action or pipeline file.")
+    
+    # Set the appropriate name field for consistency
+    # Note: run_dir uses oc.select to choose pipeline_name or action_name automatically
+    # We need to set the unused name to None BEFORE resolving to avoid interpolation errors
+    # oc.select will fail if one of the values is still ??? (mandatory missing)
+    # Convert to container, modify, and recreate to avoid triggering resolution of ??? values
+    if is_pipeline:
+        cfg.pipeline_name = entity_name
+        # Set action_name to None for pipelines to avoid interpolation errors in run_dir
+        # Convert to container to safely modify without triggering resolution
+        try:
+            cfg_dict = OmegaConf.to_container(cfg, resolve=False)
+            cfg_dict['action_name'] = None
+            cfg = OmegaConf.create(cfg_dict)
+        except Exception:
+            # Fallback: try direct assignment (might fail if action_name is ???)
+            try:
+                cfg.action_name = None
+            except Exception:
+                pass
+    elif is_action:
+        cfg.action_name = entity_name
+        # Set pipeline_name to None for actions to avoid interpolation errors in run_dir
+        # Convert to container to safely modify without triggering resolution
+        try:
+            cfg_dict = OmegaConf.to_container(cfg, resolve=False)
+            cfg_dict['pipeline_name'] = None
+            cfg = OmegaConf.create(cfg_dict)
+        except Exception:
+            # Fallback: try direct assignment (might fail if pipeline_name is ???)
+            try:
+                cfg.pipeline_name = None
+            except Exception:
+                pass
+    
+    # Now resolve the config after loading the appropriate config file
+    # At this point, both pipeline_name and action_name are set (one to entity_name, one to None)
+    # so oc.select in run_dir will work correctly
+    # Preserve the pipeline config structure during resolution (especially the actions list)
+    pipeline_backup = None
+    if is_pipeline and hasattr(cfg, 'pipeline'):
+        pipeline_backup = OmegaConf.to_container(cfg.pipeline, resolve=False)
+        logging.info(f"📋 Backing up pipeline config with {len(pipeline_backup.get('actions', []))} actions before resolution")
+    cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True, enum_to_str=True))
+    # Always restore pipeline config after resolution to ensure actions are preserved
+    if is_pipeline and pipeline_backup is not None:
+        current_pipeline = cfg.get('pipeline', {})
+        if not current_pipeline or 'actions' not in current_pipeline:
+            cfg.pipeline = OmegaConf.merge(current_pipeline or {}, pipeline_backup)
+            logging.info(f"📋 Restored pipeline config with {len(cfg.pipeline.get('actions', []))} actions after resolution")
+        else:
+            logging.info(f"📋 Pipeline config preserved with {len(cfg.pipeline.get('actions', []))} actions after resolution")
+
+    if cfg.machine.type == "remote":
+        launch_remote(cfg=cfg)
+        return
 
     is_multirun = hydra_cfg.mode.name == "MULTIRUN"
 
@@ -293,8 +525,14 @@ def _hydra_main(cfg: DictConfig) -> None:
 
     aim_run = None
     if cfg.aim.use_aim:
-        # Get experiment name from action config
-        experiment_name = getattr(cfg.get('action', {}), 'experiment_name', cfg.action_name)
+        # Get experiment name - use pipeline_name for pipelines, action_name for actions
+        entity_name_for_aim = getattr(cfg, 'pipeline_name', None) or getattr(cfg, 'action_name', None)
+        if hasattr(cfg, 'pipeline') and cfg.pipeline and 'experiment_name' in cfg.pipeline:
+            experiment_name = cfg.pipeline.experiment_name
+        elif hasattr(cfg, 'action') and cfg.action and 'experiment_name' in cfg.action:
+            experiment_name = cfg.action.experiment_name
+        else:
+            experiment_name = entity_name_for_aim
         
         aim_run = Run(
             repo=cfg.aim.repo,
@@ -371,9 +609,11 @@ def _hydra_main(cfg: DictConfig) -> None:
                 )
 
             try:
+                # Use pipeline_name for pipelines, action_name for actions
+                entity_name = getattr(cfg, 'pipeline_name', None) or getattr(cfg, 'action_name', None)
                 launch_on_slurm(
                     module=cwd,
-                    action_name=cfg.action_name,
+                    action_name=entity_name,
                     cfg=cfg,
                     aim_run=aim_run,
                 )
@@ -393,9 +633,16 @@ def _hydra_main(cfg: DictConfig) -> None:
                 raise
         else:
             try:
+                # Use pipeline_name for pipelines, action_name for actions
+                entity_name = getattr(cfg, 'pipeline_name', None) or getattr(cfg, 'action_name', None)
+                # Debug: verify pipeline config before launching
+                if is_pipeline and hasattr(cfg, 'pipeline'):
+                    pipeline_keys = list(cfg.pipeline.keys()) if hasattr(cfg.pipeline, 'keys') else []
+                    actions_count = len(cfg.pipeline.actions) if 'actions' in cfg.pipeline else 0
+                    logging.info(f"🚀 Launching pipeline with cfg.pipeline keys: {pipeline_keys[:10]}, actions: {actions_count}")
                 launch(
                     module=cwd,
-                    action_name=cfg.action_name,
+                    action_name=entity_name,
                     cfg=cfg,
                     aim_run=aim_run,
                 )

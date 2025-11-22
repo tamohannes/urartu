@@ -1,18 +1,23 @@
 defaults:
   - _self_
-  - action_config: default_action_config
+  - action: default_action
+  - pipeline: default_pipeline
   - slurm: default_slurm
   - aim: default_aim
   - machine: local
 
+# Entity identifier - use action_name for actions, pipeline_name for pipelines
+# Support shorthand: pipeline=name and action=name (mapped to pipeline_name/action_name via code)
+# Note: When pipeline=name or action=name is used, it's treated as entity name, not config group
 action_name: ???
+pipeline_name: ???
 debug: ???
 descr: null  # General description field - will be logged and used for AIM if enabled
 
-# Optional pipeline configuration (only used by pipeline actions)
-pipeline_config: {}
-
-run_dir: ".runs/${action_name}/${now:%Y-%m-%d}_${now:%H-%M-%S}"
+# Run directory - will be set based on action_name or pipeline_name
+# Use oc.select to choose pipeline_name if available and not null, otherwise action_name
+# Note: We set the unused one to null, so oc.select will pick the right one
+run_dir: ".runs/${oc.select:pipeline_name,action_name}/${now:%Y-%m-%d}_${now:%H-%M-%S}"
 
 hydra:
   sweep:

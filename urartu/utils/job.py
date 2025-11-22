@@ -133,17 +133,39 @@ class ResumableJob:
 
     def __call__(self):
         """
-        Executes the job action specified in the configuration. 
+        Executes the job action or pipeline specified in the configuration. 
         Prefers action classes with run() method over module-level main() function.
         """
         # Configure logging with debug flag from config
         debug_mode = self.cfg.get('debug', False)
         configure_logging(debug=debug_mode)
         
-        sys.path.append(f"{self.module}/actions")
-        action_module = import_module(self.action_name)
+        # Determine if this is a pipeline or action
+        from pathlib import Path
+        cwd = Path(self.module)
+        pipeline_file_path = cwd / "pipelines" / f"{self.action_name}.py"
+        action_file_path = cwd / "actions" / f"{self.action_name}.py"
         
-        # Try to find action class - look for classes that inherit from Action
+        is_pipeline = pipeline_file_path.exists()
+        is_action = action_file_path.exists()
+        
+        if is_pipeline:
+            # Load from pipelines directory
+            sys.path.append(f"{self.module}/pipelines")
+            module_name = self.action_name
+        elif is_action:
+            # Load from actions directory
+            sys.path.append(f"{self.module}/actions")
+            module_name = self.action_name
+        else:
+            raise FileNotFoundError(
+                f"Neither action nor pipeline file found for '{self.action_name}'. "
+                f"Checked: {action_file_path} and {pipeline_file_path}."
+            )
+        
+        action_module = import_module(module_name)
+        
+        # Try to find action/pipeline class - look for classes that inherit from Action
         from urartu.common.action import Action
         action_class = None
         
@@ -157,6 +179,13 @@ class ResumableJob:
         
         if action_class:
             # Use action class with run() method
+            # Debug: check pipeline config before creating instance
+            if hasattr(self.cfg, 'pipeline'):
+                from urartu.utils.logging import get_logger
+                logger = get_logger(__name__)
+                pipeline_keys = list(self.cfg.pipeline.keys()) if hasattr(self.cfg.pipeline, 'keys') else []
+                actions_count = len(self.cfg.pipeline.actions) if 'actions' in self.cfg.pipeline else 0
+                logger.info(f"🔍 ResumableJob: Creating {action_class.__name__} with cfg.pipeline keys: {pipeline_keys[:10]}, actions: {actions_count}")
             action_instance = action_class(self.cfg, self.aim_run)
             
             # Use new caching-enabled run method if available

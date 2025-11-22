@@ -1,5 +1,5 @@
 from aim import Run
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from typing import Dict, Any, Optional
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -85,17 +85,95 @@ class Action(ABC):
         # action_config contains the actual configuration for regular actions
         # pipeline_config contains the actual configuration for pipelines
         
-        # Priority: action_config > pipeline_config > cfg
-        # When an action runs inside a pipeline, action_config is specifically created for it
-        if hasattr(cfg, 'action_config') and cfg.action_config:
-            # This is a regular action or an action within a pipeline - use action_config
-            self.action_config = cfg.action_config
-        elif hasattr(cfg, 'pipeline_config') and cfg.pipeline_config:
-            # This is a pipeline itself - use pipeline_config
-            self.action_config = cfg.pipeline_config
-        else:
-            # Fallback: config is at the top level (flattened structure)
-            self.action_config = cfg
+        # Debug: Check what cfg.pipeline contains at the very start
+        if hasattr(cfg, 'pipeline'):
+            try:
+                pipeline_keys_at_start = list(cfg.pipeline.keys()) if hasattr(cfg.pipeline, 'keys') else []
+                pipeline_actions_at_start = len(cfg.pipeline.actions) if 'actions' in cfg.pipeline else 0
+                logger.info(f"Action.__init__(): At START, cfg.pipeline has {len(pipeline_keys_at_start)} keys: {pipeline_keys_at_start}, {pipeline_actions_at_start} actions")
+            except Exception as e:
+                logger.warning(f"Action.__init__(): Could not check cfg.pipeline at start: {e}")
+        
+        # Priority: action > pipeline > cfg
+        # When an action runs inside a pipeline, action is specifically created for it
+        # Use direct access with safe checks to avoid triggering resolution of ??? values
+        try:
+            # Check what we have
+            has_action = False
+            has_pipeline = False
+            try:
+                has_action = hasattr(cfg, 'action') and cfg.action and cfg.action != '???'
+                # If action is a dict/config (not a string), it's from defaults, not an entity name
+                if has_action and not isinstance(cfg.action, (str, type(None))):
+                    # It's a config dict, check if it's actually empty or just defaults
+                    if isinstance(cfg.action, dict) and len(cfg.action) == 0:
+                        has_action = False
+            except Exception:
+                pass
+            try:
+                has_pipeline = hasattr(cfg, 'pipeline') and cfg.pipeline and cfg.pipeline != '???'
+            except Exception:
+                pass
+            
+            logger.info(f"Action.__init__(): has_action={has_action}, has_pipeline={has_pipeline}")
+            
+            # Try direct access first (faster and preserves structure)
+            if has_action and not has_pipeline:
+                # This is a regular action or an action within a pipeline - use action
+                # Make a copy to preserve structure (especially for pipelines with actions)
+                self.action_config = OmegaConf.create(OmegaConf.to_container(cfg.action, resolve=False))
+            elif has_pipeline:
+                # This is a pipeline itself - use pipeline
+                # IMPORTANT: Access cfg.pipeline immediately and convert to container BEFORE any other access
+                # This prevents OmegaConf from resolving and potentially losing the actions list
+                try:
+                    # Get the pipeline config as a container (dict) without resolving
+                    # Do this FIRST before any other access to cfg.pipeline
+                    pipeline_container = OmegaConf.to_container(cfg.pipeline, resolve=False)
+                    # Verify we got the actions
+                    if isinstance(pipeline_container, dict):
+                        logger.info(f"Action.__init__(): pipeline_container is dict with keys: {list(pipeline_container.keys())}")
+                        if 'actions' in pipeline_container:
+                            logger.info(f"Action.__init__(): Found {len(pipeline_container['actions'])} actions in pipeline container")
+                        else:
+                            logger.error(f"Action.__init__(): pipeline_container is missing 'actions' key! Available keys: {list(pipeline_container.keys())}")
+                    # Create a new DictConfig from the container to preserve all keys including actions
+                    self.action_config = OmegaConf.create(pipeline_container)
+                    # Debug: verify actions were preserved
+                    final_keys = list(self.action_config.keys()) if hasattr(self.action_config, 'keys') else []
+                    logger.info(f"Action.__init__(): After OmegaConf.create, action_config has keys: {final_keys}")
+                    if 'actions' in self.action_config:
+                        logger.info(f"Action.__init__(): Successfully loaded pipeline config with {len(self.action_config.actions)} actions")
+                    else:
+                        logger.error(f"Action.__init__(): Pipeline config loaded but 'actions' key is missing! Keys: {final_keys}")
+                        # Try to get it from the original cfg.pipeline as fallback
+                        if hasattr(cfg.pipeline, 'actions') and 'actions' in cfg.pipeline:
+                            logger.error(f"Action.__init__(): Original cfg.pipeline has {len(cfg.pipeline.actions)} actions, but copy lost them! Using direct assignment.")
+                            # Use direct assignment as fallback
+                            self.action_config = cfg.pipeline
+                except Exception as e:
+                    logger.error(f"Action.__init__(): Error copying pipeline config: {e}, using direct assignment")
+                    # Fallback to direct assignment
+                    self.action_config = cfg.pipeline
+            else:
+                # Fallback: config is at the top level (flattened structure)
+                self.action_config = cfg
+        except Exception as e:
+            # If direct access fails (e.g., due to ??? values), use OmegaConf.select as fallback
+            logger.debug(f"Action.__init__(): Direct access failed ({e}), using OmegaConf.select fallback")
+            try:
+                action_val = OmegaConf.select(cfg, 'action', default=None)
+                if action_val and action_val != '???':
+                    self.action_config = action_val
+                else:
+                    pipeline_val = OmegaConf.select(cfg, 'pipeline', default=None)
+                    if pipeline_val and pipeline_val != '???':
+                        self.action_config = pipeline_val
+                    else:
+                        self.action_config = cfg
+            except Exception:
+                # Final fallback
+                self.action_config = cfg
         
         self.aim_run = aim_run
         
@@ -163,6 +241,74 @@ class Action(ABC):
         
         self._cached_outputs = None
         self._cache_key = None
+    
+    def get_cache_entry_dir(self, subdirectory: Optional[str] = None) -> Path:
+        """
+        Get the cache entry directory for this action using the proper hierarchical structure.
+        
+        This is the main API for actions to get their cache directory. It automatically uses
+        the structure: cache/{action_name}/{cache_hash}/
+        
+        Args:
+            subdirectory: Optional subdirectory name to append (e.g., "wikidata_entities", "samples")
+            
+        Returns:
+            Path to the cache entry directory (or subdirectory if specified)
+            
+        Example:
+            # Get the base cache entry directory
+            cache_dir = self.get_cache_entry_dir()
+            
+            # Get a subdirectory for specific files
+            entities_dir = self.get_cache_entry_dir("wikidata_entities")
+            samples_dir = self.get_cache_entry_dir("samples")
+        """
+        if self._cache_key is None:
+            self._cache_key = self._generate_cache_key()
+        
+        cache_entry_dir = self._get_cache_path(self._cache_key)
+        
+        if subdirectory:
+            return cache_entry_dir / subdirectory
+        return cache_entry_dir
+    
+    def get_run_dir(self, subdirectory: Optional[str] = None) -> Path:
+        """
+        Get the run directory for this action for saving plots, visualizations, and human-readable outputs.
+        
+        IMPORTANT: Plots and visualizations should ALWAYS be saved to run_dir, NOT to cache.
+        They should be regenerated from cached data every time the action runs, ensuring they
+        reflect the latest visualization code and are always up-to-date.
+        
+        This is the main API for actions to get their run directory. The run_dir is unique
+        per run and contains human-readable outputs like plots, reports, and documentation.
+        
+        Args:
+            subdirectory: Optional subdirectory name to append (e.g., "plots", "visualizations", "reports")
+            
+        Returns:
+            Path to the run directory (or subdirectory if specified)
+            
+        Example:
+            # Get the base run directory
+            run_dir = self.get_run_dir()
+            
+            # Get a subdirectory for plots
+            plots_dir = self.get_run_dir("plots")
+            visualization_dir = self.get_run_dir("visualizations")
+            
+        Note:
+            - Use get_cache_entry_dir() for machine-readable data that should be cached
+            - Use get_run_dir() for human-readable outputs like plots that should be regenerated
+        """
+        run_dir = Path(self.cfg.get('run_dir', '.'))
+        run_dir.mkdir(parents=True, exist_ok=True)
+        
+        if subdirectory:
+            subdir_path = run_dir / subdirectory
+            subdir_path.mkdir(parents=True, exist_ok=True)
+            return subdir_path
+        return run_dir
     
     def _resolve_config_paths(self, runs_dir: Path):
         """
@@ -436,6 +582,8 @@ class Action(ABC):
     
     def _generate_cache_key(self) -> str:
         """Generate a unique cache key based on action configuration."""
+        from urartu.utils.cache import CacheKeyGenerator
+        
         # For cross-pipeline cache sharing, always use action_name from config
         # This ensures the same action (e.g., _2_sample_constructor) with same config 
         # shares cache across standalone, pipeline A, pipeline B, etc.
@@ -446,47 +594,35 @@ class Action(ABC):
         logger.debug(f"   class name: {self.__class__.__name__}")
         logger.debug(f"   final action_name: {action_name}")
         
+        # Get serializable config
         serializable_config = self._get_serializable_config()
         
-        # Include action name and full configuration in cache key
-        key_factors = {
-            'action_name': action_name,
-            'config': serializable_config
-        }
+        # Use unified cache key generator
+        cache_key = CacheKeyGenerator.generate_action_cache_key(
+            action_name=action_name,
+            config=serializable_config
+        )
         
-        # Debug logging to understand cache key generation
-        logger.debug(f"🔑 Cache key generation for {action_name}:")
-        logger.debug(f"   Config keys: {list(serializable_config.keys()) if isinstance(serializable_config, dict) else 'N/A'}")
-        if isinstance(serializable_config, dict) and 'device' in serializable_config:
-            logger.debug(f"   Config device: {serializable_config['device']}")
+        logger.debug(f"   Generated cache key: {cache_key}")
         
-        # Convert to JSON for consistent ordering
-        key_string = json.dumps(key_factors, sort_keys=True)
-        
-        logger.debug(f"   Key string length: {len(key_string)}")
-        logger.debug(f"   Key string (first 200 chars): {key_string[:200]}...")
-        
-        # Generate hash
-        cache_key = hashlib.sha256(key_string.encode()).hexdigest()[:16]
-        
-        final_cache_key = f"{action_name}_{cache_key}"
-        
-        logger.debug(f"   Generated cache key: {final_cache_key}")
-        
-        # For debugging: if this is a different key from existing cache files, show differences
+        # For debugging: if this is a different key from existing cache directories, show differences
         if self.cache_dir.exists():
-            existing_files = list(self.cache_dir.glob(f"{action_name}_*.pkl"))
-            if existing_files and not any(final_cache_key in str(f) for f in existing_files):
-                logger.debug(f"🔍 Cache key mismatch detected! Generated: {final_cache_key}")
-                logger.debug(f"🔍 Existing files: {[f.name for f in existing_files]}")
-                logger.debug(f"🔍 Full key string for comparison: {key_string}")
+            action_cache_dir = self.cache_dir / action_name
+            if action_cache_dir.exists():
+                existing_dirs = [d.name for d in action_cache_dir.iterdir() if d.is_dir()]
+                cache_hash = cache_key.split('_')[-1] if '_' in cache_key else cache_key
+                if existing_dirs and cache_hash not in existing_dirs:
+                    logger.debug(f"🔍 Cache key mismatch detected! Generated: {cache_key}")
+                    logger.debug(f"🔍 Existing cache directories: {existing_dirs}")
         
-        return final_cache_key
+        return cache_key
     
     def _get_serializable_config(self) -> Dict[str, Any]:
         """Get a serializable version of the configuration for caching."""
+        from urartu.utils.cache import filter_config_for_cache
+        from omegaconf import OmegaConf
+        
         try:
-            from omegaconf import OmegaConf
             if hasattr(self, 'action_config'):
                 cfg_dict = OmegaConf.to_container(self.action_config, resolve=True)
                 
@@ -494,22 +630,13 @@ class Action(ABC):
                 logger.debug(f"📋 Config serialization for {self.__class__.__name__}:")
                 logger.debug(f"   Original config keys: {sorted(cfg_dict.keys())}")
                 
-                # Show some key config values for debugging
-                if 'device' in cfg_dict:
-                    logger.debug(f"   Config device: {cfg_dict['device']}")
-                if 'seed' in cfg_dict:
-                    logger.debug(f"   Config seed: {cfg_dict['seed']}")
-                
-                # Remove keys that should not affect caching (enables cross-pipeline cache sharing)
-                filtered_cfg = {k: v for k, v in cfg_dict.items() if k not in CACHE_IGNORE_KEYS}
+                # Use unified filter function
+                filtered_cfg = filter_config_for_cache(cfg_dict)
                 
                 removed_keys = set(cfg_dict.keys()) - set(filtered_cfg.keys())
                 if removed_keys:
                     logger.debug(f"   Removed keys: {sorted(removed_keys)}")
                 logger.debug(f"   Final config keys: {sorted(filtered_cfg.keys())}")
-                
-                # Show a sample of the final config for debugging
-                logger.debug(f"   Final config sample: {str(filtered_cfg)[:300]}...")
                 
                 return filtered_cfg
             return {}
@@ -521,8 +648,8 @@ class Action(ABC):
                 logger.debug(f"📋 Config serialization (fallback) for {self.__class__.__name__}:")
                 logger.debug(f"   Original config keys: {sorted(cfg_dict.keys())}")
                 
-                # Remove keys that should not affect caching
-                filtered_cfg = {k: v for k, v in cfg_dict.items() if k not in CACHE_IGNORE_KEYS}
+                # Use unified filter function
+                filtered_cfg = filter_config_for_cache(cfg_dict)
                 
                 removed_keys = set(cfg_dict.keys()) - set(filtered_cfg.keys())
                 if removed_keys:
@@ -533,8 +660,41 @@ class Action(ABC):
             return {}
     
     def _get_cache_path(self, cache_key: str) -> Path:
-        """Get the file path for a cache entry."""
-        return self.cache_dir / f"{cache_key}.pkl"
+        """
+        Get the directory path for a cache entry.
+        
+        Structure: cache/{action_name}/{cache_hash}/
+        
+        Args:
+            cache_key: Cache key in format "{action_name}_{hash}"
+            
+        Returns:
+            Path to the cache directory for this entry
+        """
+        # Extract action name and hash from cache key
+        # Format: {action_name}_{hash}
+        if '_' in cache_key:
+            parts = cache_key.rsplit('_', 1)
+            action_name = parts[0]
+            cache_hash = parts[1] if len(parts) > 1 else cache_key
+        else:
+            # Fallback: use cache_key as both name and hash
+            action_name = cache_key
+            cache_hash = cache_key
+        
+        # Create hierarchical structure: cache/{action_name}/{cache_hash}/
+        cache_entry_dir = self.cache_dir / action_name / cache_hash
+        return cache_entry_dir
+    
+    def _get_cache_file_path(self, cache_key: str) -> Path:
+        """Get the pickle file path within a cache entry directory."""
+        cache_dir = self._get_cache_path(cache_key)
+        return cache_dir / "cache.pkl"
+    
+    def _get_cache_metadata_path(self, cache_key: str) -> Path:
+        """Get the metadata YAML file path within a cache entry directory."""
+        cache_dir = self._get_cache_path(cache_key)
+        return cache_dir / "metadata.yaml"
     
     def _load_from_cache(self) -> Optional[Dict[str, Any]]:
         """Load outputs from cache if available and valid."""
@@ -551,26 +711,29 @@ class Action(ABC):
             cache_key = self._generate_cache_key()
             logger.debug(f"💾 Generated new cache key: {cache_key}")
         
-        cache_path = self._get_cache_path(cache_key)
-        logger.debug(f"💾 Looking for cache at: {cache_path}")
+        cache_file_path = self._get_cache_file_path(cache_key)
+        cache_dir = self._get_cache_path(cache_key)
+        logger.debug(f"💾 Looking for cache at: {cache_file_path}")
         
-        # Debug: List existing cache files
+        # Debug: List existing cache directories
         if self.cache_dir.exists():
             action_name = getattr(self.cfg, 'action_name', None) or self.__class__.__name__
-            existing_files = list(self.cache_dir.glob(f"{action_name}_*.pkl"))
-            logger.debug(f"💾 Found {len(existing_files)} existing cache files for {action_name}:")
-            for f in existing_files:
-                logger.debug(f"   📁 {f.name}")
+            action_cache_dir = self.cache_dir / action_name
+            if action_cache_dir.exists():
+                existing_dirs = [d for d in action_cache_dir.iterdir() if d.is_dir()]
+                logger.debug(f"💾 Found {len(existing_dirs)} existing cache directories for {action_name}:")
+                for d in existing_dirs:
+                    logger.debug(f"   📁 {d.name}")
         
-        if not cache_path.exists():
-            logger.debug(f"💾 Cache file not found: {cache_path.name}")
+        if not cache_file_path.exists():
+            logger.debug(f"💾 Cache file not found: {cache_file_path}")
             return None
         
         try:
-            with open(cache_path, 'rb') as f:
+            with open(cache_file_path, 'rb') as f:
                 cache_data = pickle.load(f)
             
-            logger.debug(f"💾 Loaded cache data from {cache_path.name}")
+            logger.debug(f"💾 Loaded cache data from {cache_file_path}")
             logger.debug(f"   Cache timestamp: {cache_data.get('timestamp', 'N/A')}")
             logger.debug(f"   Cache action_name: {cache_data.get('action_name', 'N/A')}")
             logger.debug(f"   Cache config_hash: {cache_data.get('config_hash', 'N/A')}")
@@ -586,8 +749,9 @@ class Action(ABC):
             else:
                 logger.debug(f"   No cache age limit set")
             
-            logger.debug(f"✅ Loading cached outputs for {self.__class__.__name__} from {cache_path.name}")
-            self.aim_run[f"action_{self.__class__.__name__}_cache_hit"] = True
+            logger.debug(f"✅ Loading cached outputs for {self.__class__.__name__} from {cache_file_path}")
+            if self.aim_run is not None:
+                self.aim_run[f"action_{self.__class__.__name__}_cache_hit"] = True
             return cache_data['outputs']
             
         except Exception as e:
@@ -611,7 +775,13 @@ class Action(ABC):
                 cache_key = self._generate_cache_key()
                 logger.debug(f"💾 Saving with new cache key: {cache_key}")
             
-            cache_path = self._get_cache_path(cache_key)
+            # Get cache directory for this entry
+            cache_entry_dir = self._get_cache_path(cache_key)
+            cache_file_path = self._get_cache_file_path(cache_key)
+            metadata_path = self._get_cache_metadata_path(cache_key)
+            
+            # Create cache entry directory
+            cache_entry_dir.mkdir(parents=True, exist_ok=True)
             
             # Use the same action name logic as cache key generation for consistency
             action_name = getattr(self.cfg, 'action_name', None) or self.__class__.__name__
@@ -623,11 +793,11 @@ class Action(ABC):
                 'config_hash': hashlib.sha256(json.dumps(self._get_serializable_config(), sort_keys=True).encode()).hexdigest()[:8]
             }
             
-            with open(cache_path, 'wb') as f:
+            # Save cache data to pickle file
+            with open(cache_file_path, 'wb') as f:
                 pickle.dump(cache_data, f)
             
             # Also save human-readable metadata
-            metadata_path = cache_path.with_suffix('.yaml')
             metadata = {
                 'cache_key': cache_key,
                 'action_name': action_name,  # Use the same action name as in cache_data
@@ -640,7 +810,8 @@ class Action(ABC):
                 yaml.dump(metadata, f, default_flow_style=False, indent=2, sort_keys=False)
             
             logger.info(f"Cached outputs for {self.__class__.__name__} with key {cache_key}")
-            self.aim_run[f"action_{self.__class__.__name__}_cache_hit"] = False
+            if self.aim_run is not None:
+                self.aim_run[f"action_{self.__class__.__name__}_cache_hit"] = False
             
         except Exception as e:
             logger.warning(f"Failed to save cache for {self.__class__.__name__}: {e}")
@@ -688,14 +859,12 @@ class Action(ABC):
         """Clear the cache for this action."""
         if self.cache_dir.exists():
             cache_key = getattr(self, '_cache_key', None) or self._generate_cache_key()
-            cache_path = self._get_cache_path(cache_key)
+            cache_entry_dir = self._get_cache_path(cache_key)
             
-            if cache_path.exists():
-                cache_path.unlink()
-                metadata_path = cache_path.with_suffix('.yaml')
-                if metadata_path.exists():
-                    metadata_path.unlink()
-                logger.info(f"Cleared cache for {self.__class__.__name__}")
+            if cache_entry_dir.exists():
+                import shutil
+                shutil.rmtree(cache_entry_dir)
+                logger.info(f"Cleared cache directory for {self.__class__.__name__}: {cache_entry_dir}")
     
     def cleanup_memory(self):
         """
@@ -857,12 +1026,12 @@ class ActionDataset(Action):
         dataset_config = None
         
         # Try different locations for dataset config based on configuration structure
-        if hasattr(cfg, 'action_config') and cfg.action_config and hasattr(cfg.action_config, 'dataset'):
-            # Pipeline actions: cfg.action_config.dataset
-            dataset_config = cfg.action_config.dataset
-        elif hasattr(cfg, 'pipeline_config') and cfg.pipeline_config and hasattr(cfg.pipeline_config, 'dataset'):
-            # Pipeline actions fallback: cfg.pipeline_config.dataset
-            dataset_config = cfg.pipeline_config.dataset
+        if hasattr(cfg, 'action') and cfg.action and hasattr(cfg.action, 'dataset'):
+            # Pipeline actions: cfg.action.dataset
+            dataset_config = cfg.action.dataset
+        elif hasattr(cfg, 'pipeline') and cfg.pipeline and hasattr(cfg.pipeline, 'dataset'):
+            # Pipeline actions fallback: cfg.pipeline.dataset
+            dataset_config = cfg.pipeline.dataset
         elif hasattr(cfg, 'dataset'):
             # Individual actions: cfg.dataset
             dataset_config = cfg.dataset

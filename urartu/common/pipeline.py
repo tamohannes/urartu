@@ -149,7 +149,19 @@ class Pipeline(Action):
         
         # Set up pipeline config accessor
         # Use the action_config which was properly set by the parent Action class
-        self.pipeline_config = self.action_config
+        # Make a copy to ensure it's not modified later
+        # This preserves the actions list even if action_config is modified
+        try:
+            pipeline_config_container = OmegaConf.to_container(self.action_config, resolve=False)
+            self.pipeline_config = OmegaConf.create(pipeline_config_container)
+            logger.debug(f"Pipeline.__init__(): Created pipeline_config copy with {len(self.pipeline_config.keys())} keys")
+            if 'actions' in self.pipeline_config:
+                logger.info(f"Pipeline.__init__(): pipeline_config has {len(self.pipeline_config.actions)} actions")
+            else:
+                logger.warning(f"Pipeline.__init__(): pipeline_config missing 'actions'! Keys: {list(self.pipeline_config.keys())}")
+        except Exception as e:
+            logger.warning(f"Pipeline.__init__(): Error copying pipeline_config: {e}, using direct reference")
+            self.pipeline_config = self.action_config
         
         # Cache configuration from pipeline
         self.cache_enabled = self.pipeline_config.get('cache_enabled', True)
@@ -213,14 +225,8 @@ class Pipeline(Action):
     
     def _make_serializable(self, obj):
         """Convert OmegaConf objects to regular Python objects for JSON serialization."""
-        if OmegaConf.is_config(obj):
-            return OmegaConf.to_container(obj, resolve=True)
-        elif isinstance(obj, dict):
-            return {k: self._make_serializable(v) for k, v in obj.items()}
-        elif isinstance(obj, (list, tuple)):
-            return [self._make_serializable(item) for item in obj]
-        else:
-            return obj
+        from urartu.utils.cache import make_serializable
+        return make_serializable(obj)
     
     def _get_common_pipeline_configs(self) -> Dict[str, Any]:
         """
@@ -273,10 +279,7 @@ class Pipeline(Action):
         """
         Inject outputs from previous actions into the current action's configuration.
         
-        This method handles the data flow between actions by:
-        1. Checking if the current action declares dependencies (depends_on)
-        2. For each dependency, extracting the specified output from the source action
-        3. Dynamically setting the value at the specified config path
+        Uses the unified DependencyResolver for automatic dependency resolution.
         
         Args:
             action_config_dict: The action's configuration dictionary
@@ -285,55 +288,28 @@ class Pipeline(Action):
         Returns:
             Updated configuration dictionary with injected outputs
         """
-        # Make a deep copy to avoid modifying the original
-        import copy
-        config = copy.deepcopy(action_config_dict)
+        from urartu.common.dependency import DependencyResolver
         
-        debug_mode = self.pipeline_config.get('debug', False)
+        # Prepare action outputs dictionary for resolver
+        action_outputs_dict = {
+            name: output.outputs 
+            for name, output in self.action_outputs.items()
+        }
         
-        # Check if this action declares dependencies
-        if 'depends_on' not in config:
-            if debug_mode:
-                logger.info(f"📝 No dependencies declared for this action")
-            return config
-            
-        if debug_mode:
-            logger.info(f"🔄 Processing dependencies for action '{current_action_name}'")
-        dependencies = config['depends_on']
+        # Create resolver and resolve dependencies
+        resolver = DependencyResolver(action_outputs_dict)
         
-        # Process each dependency
-        for source_action_name, mappings in dependencies.items():
-            if debug_mode:
-                logger.info(f"   📤 Processing dependency on '{source_action_name}'")
-            
-            # Check if the source action has completed and produced outputs
-            if source_action_name not in self.action_outputs:
-                logger.error(f"   ❌ Source action '{source_action_name}' has not completed yet!")
-                continue
-                
-            source_outputs = self.action_outputs[source_action_name].outputs
-            if not source_outputs:
-                logger.warning(f"   ⚠️ Source action '{source_action_name}' produced no outputs")
-                continue
-            
-            # Process each output->config mapping
-            for output_key, config_path in mappings.items():
-                if output_key in source_outputs:
-                    output_value = source_outputs[output_key]
-                    
-                    # Inject the value at the specified config path
-                    self._set_nested_config_value(config, config_path, output_value)
-                    if debug_mode:
-                        logger.info(f"   ✅ Injected {source_action_name}.{output_key} → {config_path} = {output_value}")
-                else:
-                    logger.warning(f"   ❌ Output '{output_key}' not found in {source_action_name} outputs")
-                    logger.warning(f"       Available outputs: {list(source_outputs.keys())}")
+        # Extract depends_on if present
+        depends_on = action_config_dict.get('depends_on')
         
-        # Remove depends_on from the final config (it's metadata, not action config)
-        if 'depends_on' in config:
-            del config['depends_on']
-            
-        return config
+        # Resolve dependencies
+        resolved_config = resolver.resolve_dependencies(
+            action_config=action_config_dict,
+            current_action_name=current_action_name,
+            explicit_depends_on=depends_on
+        )
+        
+        return resolved_config
     
     def _set_nested_config_value(self, config: Dict[str, Any], path: str, value: Any):
         """
@@ -344,17 +320,11 @@ class Pipeline(Action):
             path: Dot-separated path (e.g., 'dataset.data_files')
             value: Value to set
         """
-        keys = path.split('.')
-        current = config
+        from urartu.common.dependency import DependencyResolver
         
-        # Navigate to the parent of the target key
-        for key in keys[:-1]:
-            if key not in current:
-                current[key] = {}
-            current = current[key]
-        
-        # Set the final value
-        current[keys[-1]] = value
+        # Use DependencyResolver's method for consistency
+        resolver = DependencyResolver({})
+        resolver._set_nested_config_value(config, path, value)
     
     def get_outputs(self) -> Dict[str, Any]:
         """
@@ -664,25 +634,30 @@ class Pipeline(Action):
             f.write(f"Config overrides after resolution: {str(resolved_config_overrides)[:500]}\n")
         
         # Import the action module
+        # Actions are always loaded from actions/ directory
+        import sys
+        actions_dir = Path.cwd() / "actions"
+        if str(actions_dir) not in sys.path:
+            sys.path.append(str(actions_dir))
+        
         try:
             # First try fully qualified package import (actions.<name>)
             action_module = importlib.import_module(f"actions.{pipeline_action.action_name}")
         except ImportError:
-            # Fall back to importing from local actions directory added to sys.path
-            import sys
-            actions_dir = Path.cwd() / "actions"
-            if str(actions_dir) not in sys.path:
-                sys.path.append(str(actions_dir))
+            # Fall back to importing from local actions directory
             try:
                 action_module = importlib.import_module(pipeline_action.action_name)
             except ImportError as e:
                 raise ImportError(
-                    f"Failed to import action '{pipeline_action.action_name}' from package or directory {actions_dir}: {e}"
+                    f"Failed to import action '{pipeline_action.action_name}' from actions directory {actions_dir}: {e}"
                 )
         
         # Prepare configuration for this action
         action_cfg = OmegaConf.create(self.cfg)  # Deep copy base config
         action_cfg.action_name = pipeline_action.action_name  # Set the action name
+        # Remove pipeline key so Action.__init__() will use cfg.action instead
+        if 'pipeline' in action_cfg:
+            del action_cfg.pipeline
         
         # Get pipeline config hash to ensure cache invalidation when pipeline config changes
         pipeline_config_hash = self._get_config_hash()
@@ -738,7 +713,7 @@ class Pipeline(Action):
                 if overridden_keys:
                     logger.info(f"Action '{pipeline_action.name}' overrides pipeline configs: {list(overridden_keys)}")
             
-            action_cfg.action_config = merged_config  # Set the action configuration
+            action_cfg.action = merged_config  # Set the action configuration (Action.__init__ looks for cfg.action)
             if debug_mode:
                 logger.info(f"Applied config overrides with pipeline common configs for {pipeline_action.name}")
         else:
@@ -751,7 +726,7 @@ class Pipeline(Action):
             if debug_mode:
                 logger.info(f"🔑 Added pipeline config hash {pipeline_config_hash} to action '{pipeline_action.name}'")
             
-            action_cfg.action_config = base_config  # Set the action configuration
+            action_cfg.action = base_config  # Set the action configuration (Action.__init__ looks for cfg.action)
             
             if debug_mode:
                 logger.info(f"🔧 No action overrides for '{pipeline_action.name}' - using pipeline configs:")
@@ -865,12 +840,17 @@ class Pipeline(Action):
 
         # Load actions from configuration ONLY if not already added by subclass
         # This allows subclasses to programmatically define actions with custom logic
-        logger.debug(f"🔍 Pipeline.initialize(): self.actions = {len(self.actions)} items")
-        logger.debug(f"🔍 Pipeline.initialize(): 'actions' in pipeline_config = {'actions' in self.pipeline_config}")
+        logger.info(f"🔍 Pipeline.initialize(): self.actions = {len(self.actions)} items")
+        logger.info(f"🔍 Pipeline.initialize(): pipeline_config type = {type(self.pipeline_config)}")
+        logger.info(f"🔍 Pipeline.initialize(): pipeline_config keys = {list(self.pipeline_config.keys()) if hasattr(self.pipeline_config, 'keys') else 'N/A'}")
+        logger.info(f"🔍 Pipeline.initialize(): 'actions' in pipeline_config = {'actions' in self.pipeline_config}")
         if not self.actions and 'actions' in self.pipeline_config:
-            logger.debug("📥 Loading actions from YAML configuration")
+            logger.info("📥 Loading actions from YAML configuration")
             # Load actions from YAML configuration
-            for action_cfg in self.pipeline_config.actions:
+            actions_list = self.pipeline_config.actions
+            logger.info(f"📥 Found {len(actions_list)} actions to load")
+            for idx, action_cfg in enumerate(actions_list):
+                logger.info(f"📥 Loading action {idx+1}/{len(actions_list)}: {action_cfg.get('action_name', 'unknown')}")
                 # Get all config except metadata keys
                 # IMPORTANT: Keep 'depends_on' - it will be processed during action execution by _inject_action_outputs
                 config_overrides = {k: v for k, v in action_cfg.items() 
@@ -886,11 +866,14 @@ class Pipeline(Action):
                     
         logger.debug(f"Pipeline initialized with {len(self.actions)} actions")
         
-        # Validate all actions exist
+        # Validate all actions exist (actions are always in actions/ directory)
         for action in self.actions:
             action_path = Path("actions") / f"{action.action_name}.py"
             if not action_path.exists():
-                raise FileNotFoundError(f"Action file not found: {action_path}")
+                raise FileNotFoundError(
+                    f"Action file not found: {action_path}. "
+                    f"Actions must be in the 'actions/' directory."
+                )
             logger.debug(f"  ✓ Action '{action.name}': {action.action_name}")
             
         self._initialized = True
@@ -1007,8 +990,7 @@ class Pipeline(Action):
         """
         Generate a unique cache key for an action based on its configuration.
         
-        For cross-pipeline cache sharing, we focus on the action's core configuration
-        and ignore pipeline context when the action doesn't depend on previous outputs.
+        Uses the unified CacheKeyGenerator for consistent cache key generation.
         
         Args:
             pipeline_action: The pipeline action
@@ -1017,54 +999,69 @@ class Pipeline(Action):
         Returns:
             A unique cache key string
         """
-        # Import the cache ignore keys from action module for consistency
-        from .action import CACHE_IGNORE_KEYS
+        from urartu.utils.cache import CacheKeyGenerator
         
-        # Filter config to enable cross-pipeline cache sharing
-        # Remove pipeline-level keys that don't affect action outputs
-        filtered_config = {k: v for k, v in resolved_config.items() if k not in CACHE_IGNORE_KEYS}
-        
-        # Get hash of complete config file to ensure cache invalidation when config changes
-        config_hash = self._get_config_hash()
-        logger.debug(f"Generated config hash for cache key: {config_hash}")
-        
-        # For cross-pipeline cache sharing: if this action has no previous outputs (first action),
-        # generate a cache key based only on the action config, not pipeline context
-        has_previous_outputs = bool(self.action_outputs)
-        has_depends_on = 'depends_on' in resolved_config and resolved_config['depends_on']
-        
-        if not has_previous_outputs and not has_depends_on:
-            # First action with no dependencies - use simplified cache key for cross-pipeline sharing
-            # Only include action-specific config, not pipeline-wide config hash
-            key_factors = {
-                'action_name': pipeline_action.action_name,
-                'config': self._make_serializable(filtered_config),
-            }
-        else:
-            # Action depends on previous outputs - include pipeline context
-            key_factors = {
-                'action_name': pipeline_action.action_name,
-                'config_overrides': self._make_serializable(filtered_config),
-                'outputs_to_track': self._make_serializable(pipeline_action.outputs_to_track),
-                'config_hash': config_hash,  # Include complete config hash
-                # Include previous action outputs that might affect this action
-                'previous_outputs': {
-                    name: self._make_serializable(output.outputs) 
-                    for name, output in self.action_outputs.items()
-                }
+        # Prepare previous outputs dictionary
+        previous_outputs = None
+        if self.action_outputs:
+            previous_outputs = {
+                name: output.outputs 
+                for name, output in self.action_outputs.items()
             }
         
-        # Convert to JSON for consistent ordering
-        key_string = json.dumps(key_factors, sort_keys=True)
+        # Get pipeline config hash if available
+        pipeline_config_hash = None
+        try:
+            pipeline_config_hash = self._get_config_hash()
+        except Exception:
+            pass
         
-        # Generate hash
-        cache_key = hashlib.sha256(key_string.encode()).hexdigest()[:16]
+        # Use unified cache key generator
+        cache_key = CacheKeyGenerator.generate_pipeline_action_cache_key(
+            action_name=pipeline_action.action_name,
+            config_overrides=resolved_config,
+            previous_outputs=previous_outputs,
+            pipeline_config_hash=pipeline_config_hash
+        )
         
-        return f"{pipeline_action.action_name}_{cache_key}"
+        return cache_key
     
     def _get_cache_path(self, cache_key: str) -> Path:
-        """Get the file path for a cache entry."""
-        return self.cache_dir / f"{cache_key}.pkl"
+        """
+        Get the directory path for a cache entry.
+        
+        Structure: cache/{action_name}/{cache_hash}/
+        
+        Args:
+            cache_key: Cache key in format "{action_name}_{hash}"
+            
+        Returns:
+            Path to the cache directory for this entry
+        """
+        # Extract action name and hash from cache key
+        # Format: {action_name}_{hash}
+        if '_' in cache_key:
+            parts = cache_key.rsplit('_', 1)
+            action_name = parts[0]
+            cache_hash = parts[1] if len(parts) > 1 else cache_key
+        else:
+            # Fallback: use cache_key as both name and hash
+            action_name = cache_key
+            cache_hash = cache_key
+        
+        # Create hierarchical structure: cache/{action_name}/{cache_hash}/
+        cache_entry_dir = self.cache_dir / action_name / cache_hash
+        return cache_entry_dir
+    
+    def _get_cache_file_path(self, cache_key: str) -> Path:
+        """Get the pickle file path within a cache entry directory."""
+        cache_dir = self._get_cache_path(cache_key)
+        return cache_dir / "cache.pkl"
+    
+    def _get_cache_metadata_path(self, cache_key: str) -> Path:
+        """Get the metadata YAML file path within a cache entry directory."""
+        cache_dir = self._get_cache_path(cache_key)
+        return cache_dir / "metadata.yaml"
     
     def _save_to_cache(self, cache_key: str, action_output: ActionOutput, config_hash: str):
         """Save action output to cache."""
@@ -1074,6 +1071,14 @@ class Pipeline(Action):
         try:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             
+            # Get cache directory for this entry
+            cache_entry_dir = self._get_cache_path(cache_key)
+            cache_file_path = self._get_cache_file_path(cache_key)
+            metadata_path = self._get_cache_metadata_path(cache_key)
+            
+            # Create cache entry directory
+            cache_entry_dir.mkdir(parents=True, exist_ok=True)
+            
             cache_entry = CacheEntry(
                 action_output=action_output,
                 cache_key=cache_key,
@@ -1082,12 +1087,11 @@ class Pipeline(Action):
                 action_version=None  # Could add git hash or file modification time
             )
             
-            cache_path = self._get_cache_path(cache_key)
-            with open(cache_path, 'wb') as f:
+            # Save cache entry to pickle file
+            with open(cache_file_path, 'wb') as f:
                 pickle.dump(cache_entry, f)
                 
             # Also save a human-readable metadata file
-            metadata_path = cache_path.with_suffix('.yaml')
             
             # Get the full resolved config for this action
             pipeline_action = None
@@ -1132,17 +1136,18 @@ class Pipeline(Action):
             logger.info(f"Force rerun is enabled, skipping cache lookup for {cache_key}")
             return None
             
-        cache_path = self._get_cache_path(cache_key)
-        logger.info(f"🔍 Checking cache file: {cache_path}")
-        logger.info(f"📂 Cache file exists: {cache_path.exists()}")
+        cache_file_path = self._get_cache_file_path(cache_key)
+        cache_entry_dir = self._get_cache_path(cache_key)
+        logger.info(f"🔍 Checking cache directory: {cache_entry_dir}")
+        logger.info(f"📂 Cache file exists: {cache_file_path.exists()}")
         
-        if not cache_path.exists():
-            logger.info(f"❌ Cache file not found: {cache_path}")
+        if not cache_file_path.exists():
+            logger.info(f"❌ Cache file not found: {cache_file_path}")
             return None
             
         try:
-            logger.info(f"📖 Attempting to load cache from: {cache_path}")
-            with open(cache_path, 'rb') as f:
+            logger.info(f"📖 Attempting to load cache from: {cache_file_path}")
+            with open(cache_file_path, 'rb') as f:
                 cache_entry = pickle.load(f)
             logger.info(f"✅ Successfully loaded cache entry for {cache_key}")
                 

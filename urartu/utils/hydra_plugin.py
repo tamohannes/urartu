@@ -33,17 +33,39 @@ class UrartuPlugin(SearchPathPlugin):
             search_path (ConfigSearchPath): The Hydra config search path instance that will be manipulated.
 
         Effects:
-            Appends four paths to the `search_path`:
-            - A local file system path for user-specific configurations.
-            - A packaged path for user-specific configurations within installed packages.
-            - A local file system path for general configurations.
-            - A packaged path for general configurations within installed packages.
+            Appends paths for:
+            - Base config directories (for aim, slurm, machine, etc.)
+            - Action and pipeline specific config directories
+            - Both user-specific and general configs
         """
+        # Add base config directories first (for aim, slurm, machine, etc.)
+        # User-specific base configs
         search_path.append(
             provider="urartu", path=f"file://{cwd}/configs_{current_user}"
         )
         search_path.append(
             provider="urartu", path=f"pkg://{cwd}/configs_{current_user}"
         )
+        # General base configs
         search_path.append(provider="urartu", path=f"file://{cwd}/configs")
         search_path.append(provider="urartu", path=f"pkg://{cwd}/configs")
+        
+        # Add action and pipeline specific directories
+        # User-specific action/pipeline configs
+        search_path.append(
+            provider="urartu", path=f"file://{cwd}/configs_{current_user}/action"
+        )
+        search_path.append(
+            provider="urartu", path=f"file://{cwd}/configs_{current_user}/pipeline"
+        )
+        search_path.append(
+            provider="urartu", path=f"pkg://{cwd}/configs_{current_user}/action"
+        )
+        search_path.append(
+            provider="urartu", path=f"pkg://{cwd}/configs_{current_user}/pipeline"
+        )
+        # General action/pipeline configs
+        search_path.append(provider="urartu", path=f"file://{cwd}/configs/action")
+        search_path.append(provider="urartu", path=f"file://{cwd}/configs/pipeline")
+        search_path.append(provider="urartu", path=f"pkg://{cwd}/configs/action")
+        search_path.append(provider="urartu", path=f"pkg://{cwd}/configs/pipeline")
