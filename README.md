@@ -214,7 +214,7 @@ If you find Urartu helpful in your research, please cite it:
 @software{Tamoyan_Urartu_2023,
   author = {Hovhannes Tamoyan},
   license = {Apache-2.0},
-  month = {11},
+  month = {8},
   title = {{Urartu}},
   url = {https://github.com/tamohannes/urartu},
   year = {2023}
