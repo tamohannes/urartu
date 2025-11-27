@@ -1,9 +1,10 @@
-import sys
 import logging
+import sys
 from importlib import import_module
 from typing import Dict
 
 from aim import Run
+
 from urartu.utils.logging import configure_logging
 
 
@@ -62,7 +63,7 @@ class ResumableSlurmJob:
         # Configure logging with debug flag from config
         debug_mode = self.cfg.get('debug', False)
         configure_logging(debug=debug_mode)
-        
+
         import submitit
 
         environment = submitit.JobEnvironment()
@@ -78,9 +79,59 @@ class ResumableSlurmJob:
                 {"job_id": int(environment.job_id), "hostname": environment.hostname},
             )
 
-        sys.path.append(f"{self.module}/actions")
-        action = import_module(self.action_name)
-        action.main(cfg=self.cfg, aim_run=self.aim_run)
+        # Only pipelines are supported now
+        from pathlib import Path
+
+        cwd = Path(self.module)
+        pipeline_file_path = cwd / "pipelines" / f"{self.action_name}.py"
+
+        if not pipeline_file_path.exists():
+            raise FileNotFoundError(
+                f"Pipeline file not found: {pipeline_file_path}. " "Please ensure that the pipeline file exists in the 'pipelines' directory."
+            )
+
+        # Load from pipelines directory
+        sys.path.append(f"{self.module}/pipelines")
+        module_name = self.action_name
+
+        action_module = import_module(module_name)
+
+        # Try to find action/pipeline class - look for classes that inherit from Action
+        from urartu.common.action import Action
+
+        action_class = None
+        action_candidates = []
+
+        for attr_name in dir(action_module):
+            attr = getattr(action_module, attr_name)
+            if isinstance(attr, type) and issubclass(attr, Action) and attr != Action:
+                action_candidates.append(attr)
+
+        # Prefer the most specific class (not imported from urartu.common)
+        for candidate in action_candidates:
+            if candidate.__module__ == action_module.__name__:
+                action_class = candidate
+                break
+
+        # Fallback to any suitable candidate
+        if not action_class and action_candidates:
+            action_class = action_candidates[0]
+
+        if action_class:
+            # Use action class with run() method
+            action_instance = action_class(self.cfg, self.aim_run)
+
+            # Use new caching-enabled run method if available
+            if hasattr(action_instance, 'run_with_cache'):
+                action_instance.run_with_cache()
+            elif hasattr(action_instance, 'run'):
+                action_instance.run()
+            else:
+                # Fallback to legacy main function on module
+                action_module.main(cfg=self.cfg, aim_run=self.aim_run)
+        else:
+            # Fallback to legacy main function on module
+            action_module.main(cfg=self.cfg, aim_run=self.aim_run)
 
     def checkpoint(self):
         """
@@ -133,61 +184,55 @@ class ResumableJob:
 
     def __call__(self):
         """
-        Executes the job action or pipeline specified in the configuration. 
+        Executes the job action or pipeline specified in the configuration.
         Prefers action classes with run() method over module-level main() function.
         """
         # Configure logging with debug flag from config
         debug_mode = self.cfg.get('debug', False)
         configure_logging(debug=debug_mode)
-        
-        # Determine if this is a pipeline or action
+
+        # Only pipelines are supported now
         from pathlib import Path
+
         cwd = Path(self.module)
         pipeline_file_path = cwd / "pipelines" / f"{self.action_name}.py"
-        action_file_path = cwd / "actions" / f"{self.action_name}.py"
-        
-        is_pipeline = pipeline_file_path.exists()
-        is_action = action_file_path.exists()
-        
-        if is_pipeline:
-            # Load from pipelines directory
-            sys.path.append(f"{self.module}/pipelines")
-            module_name = self.action_name
-        elif is_action:
-            # Load from actions directory
-            sys.path.append(f"{self.module}/actions")
-            module_name = self.action_name
-        else:
+
+        if not pipeline_file_path.exists():
             raise FileNotFoundError(
-                f"Neither action nor pipeline file found for '{self.action_name}'. "
-                f"Checked: {action_file_path} and {pipeline_file_path}."
+                f"Pipeline file not found: {pipeline_file_path}. " "Please ensure that the pipeline file exists in the 'pipelines' directory."
             )
-        
+
+        # Load from pipelines directory
+        sys.path.append(f"{self.module}/pipelines")
+        module_name = self.action_name
+
         action_module = import_module(module_name)
-        
+
         # Try to find action/pipeline class - look for classes that inherit from Action
         from urartu.common.action import Action
+
         action_class = None
-        
+
         for attr_name in dir(action_module):
             attr = getattr(action_module, attr_name)
-            if (isinstance(attr, type) and 
-                issubclass(attr, Action) and 
-                attr != Action):
+            if isinstance(attr, type) and issubclass(attr, Action) and attr != Action:
                 action_class = attr
                 break
-        
+
         if action_class:
             # Use action class with run() method
             # Debug: check pipeline config before creating instance
             if hasattr(self.cfg, 'pipeline'):
                 from urartu.utils.logging import get_logger
+
                 logger = get_logger(__name__)
                 pipeline_keys = list(self.cfg.pipeline.keys()) if hasattr(self.cfg.pipeline, 'keys') else []
                 actions_count = len(self.cfg.pipeline.actions) if 'actions' in self.cfg.pipeline else 0
-                logger.info(f"🔍 ResumableJob: Creating {action_class.__name__} with cfg.pipeline keys: {pipeline_keys[:10]}, actions: {actions_count}")
+                logger.info(
+                    f"🔍 ResumableJob: Creating {action_class.__name__} with cfg.pipeline keys: {pipeline_keys[:10]}, actions: {actions_count}"
+                )
             action_instance = action_class(self.cfg, self.aim_run)
-            
+
             # Use new caching-enabled run method if available
             if hasattr(action_instance, 'run_with_cache'):
                 action_instance.run_with_cache()

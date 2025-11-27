@@ -51,9 +51,7 @@ class DatasetFromFile(Dataset):
         elif self.cfg.file_extension.startswith("txt"):
             file_format = "txt"
         else:
-            raise KeyError(
-                f"Files in '{self.cfg.file_extension}' format are not supported"
-            )
+            raise KeyError(f"Files in '{self.cfg.file_extension}' format are not supported")
 
         data_files = [
             str(file)
@@ -64,10 +62,7 @@ class DatasetFromFile(Dataset):
             dataset = load_dataset(file_format, data_files=data_files)["train"]
             train_size = int(self.cfg.train_size * len(dataset))
 
-            self.dataset = dataset.train_test_split(
-                train_size=train_size,
-                seed=self.cfg.seed if "seed" in self.cfg else 42
-            )
+            self.dataset = dataset.train_test_split(train_size=train_size, seed=self.cfg.seed if "seed" in self.cfg else 42)
         else:
             self.dataset = load_dataset(file_format, data_files=data_files)
         return self.dataset

@@ -1,6 +1,7 @@
-import torch  # NOQA
-from typing import Dict
 import hashlib
+from typing import Dict
+
+import torch  # NOQA
 
 
 def dict_to_8char_hash(d: Dict):
@@ -21,5 +22,5 @@ def dict_to_8char_hash(d: Dict):
     dict_str = str(sorted(d.items()))
     hash_obj = hashlib.sha256(dict_str.encode())
     hash_hex = hash_obj.hexdigest()
-    
+
     return hash_hex[:8]

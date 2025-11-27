@@ -15,8 +15,8 @@ debug: ???
 descr: null  # General description field - will be logged and used for AIM if enabled
 
 # Run directory - will be set based on action_name or pipeline_name
-# Use oc.select to choose pipeline_name if available and not null, otherwise action_name
-# Note: We set the unused one to null, so oc.select will pick the right one
+# Use oc.select to choose pipeline_name if available and not empty, otherwise action_name
+# Note: We delete the unused field (set to null) so oc.select picks the correct one
 run_dir: ".runs/${oc.select:pipeline_name,action_name}/${now:%Y-%m-%d}_${now:%H-%M-%S}"
 
 hydra:

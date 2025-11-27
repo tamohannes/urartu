@@ -19,25 +19,25 @@ pip install urartu
 ```
 
 Or from source:
-```bash
+    ```bash
 git clone git@github.com:tamohannes/urartu.git
-cd urartu
-pip install -e .
-```
+    cd urartu
+    pip install -e .
+    ```
 
 # **Quick Start**
 
-## **Running Actions and Pipelines**
+## **Running Pipelines**
 
 ```bash
-# Run an action
-urartu action=my_action
+# Run a pipeline (pipeline name is the first argument)
+urartu my_pipeline
 
-# Run a pipeline
-urartu pipeline=my_pipeline
+# With config group selectors (unquoted = config group, quoted = string override)
+urartu my_pipeline machine=local aim=local slurm=no_slurm debug=true
 
-# With options
-urartu pipeline=my_pipeline aim=local slurm=no_slurm machine=local
+# With string overrides (quoted values)
+urartu my_pipeline machine="custom" descr="my experiment"
 ```
 
 ## **Project Structure**
@@ -197,13 +197,14 @@ project_name: "my_project"
 ```
 
 ```bash
-urartu pipeline=my_pipeline machine=remote slurm=slurm
+urartu my_pipeline machine=remote slurm=slurm
 ```
 
 ## **Multi-run**
 
 ```bash
-urartu --multirun pipeline=my_pipeline pipeline.actions[0].learning_rate=1e-3,1e-4,1e-5
+# Note: Multirun/sweep functionality is not yet implemented in the new CLI
+# For now, use nested loops in your pipeline code or run multiple times manually
 ```
 
 # **Citation**

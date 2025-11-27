@@ -4,22 +4,17 @@ import re
 import shutil
 import sys
 from abc import ABC, abstractmethod
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
 from aim import Repo, Run
-from hydra.core.hydra_config import HydraConfig
-from hydra.core.plugins import Plugins
-from omegaconf import OmegaConf
+from omegaconf import DictConfig, OmegaConf
 
-from urartu.utils.hydra_plugin import UrartuPlugin
-from urartu.utils.launcher import launch, launch_on_slurm, launch_remote
-from urartu.utils.logging import get_logger, configure_logging
-
-Plugins.instance().register(UrartuPlugin)
-
-import hydra
-from omegaconf import DictConfig
+from urartu.utils.config.cli import parse_args, print_usage
+from urartu.utils.config.config_loader import load_pipeline_config
+from urartu.utils.execution.launcher import launch, launch_on_slurm, launch_remote
+from urartu.utils.logging import configure_logging, get_logger
 
 
 class Command(ABC):
@@ -95,9 +90,7 @@ class CleanCommand(Command):
 
         for dir_path in action_dir.glob("**/"):
             if "_multirun" in str(dir_path):
-                self._handle_multirun_directory(
-                    dir_path, date_pattern, run_hashes, dirs_to_delete
-                )
+                self._handle_multirun_directory(dir_path, date_pattern, run_hashes, dirs_to_delete)
             elif re.match(date_pattern, dir_path.name):
                 self._handle_regular_directory(dir_path, run_hashes, dirs_to_delete)
 
@@ -123,18 +116,12 @@ class CleanCommand(Command):
 
             if all_num_dirs and len(all_num_dirs) == len(invalid_num_dirs):
                 dirs_to_delete.append(dir_path)
-                logging.info(
-                    f"Multirun directory {dir_path} has no valid runs, marking for deletion"
-                )
+                logging.info(f"Multirun directory {dir_path} has no valid runs, marking for deletion")
             elif invalid_num_dirs:
                 dirs_to_delete.extend(invalid_num_dirs)
-                logging.info(
-                    f"Found {len(invalid_num_dirs)} invalid runs in multirun directory {dir_path}"
-                )
+                logging.info(f"Found {len(invalid_num_dirs)} invalid runs in multirun directory {dir_path}")
 
-    def _handle_regular_directory(
-        self, dir_path: Path, run_hashes: List[str], dirs_to_delete: List[Path]
-    ) -> None:
+    def _handle_regular_directory(self, dir_path: Path, run_hashes: List[str], dirs_to_delete: List[Path]) -> None:
         """Handle regular directory checking."""
         if not self._has_valid_hash(dir_path, run_hashes):
             dirs_to_delete.append(dir_path)
@@ -145,14 +132,10 @@ class CleanCommand(Command):
         yaml_files = list(dir_path.glob("*.yaml"))
         return any(yaml_file.stem in run_hashes for yaml_file in yaml_files)
 
-    def _delete_marked_directories(
-        self, action_name: str, dirs_to_delete: List[Path]
-    ) -> None:
+    def _delete_marked_directories(self, action_name: str, dirs_to_delete: List[Path]) -> None:
         """Delete all marked directories."""
         if dirs_to_delete:
-            logging.info(
-                f"Found {len(dirs_to_delete)} directories to delete in action {action_name}"
-            )
+            logging.info(f"Found {len(dirs_to_delete)} directories to delete in action {action_name}")
             for dir_path in dirs_to_delete:
                 try:
                     shutil.rmtree(dir_path)
@@ -203,34 +186,23 @@ def parse_command_args(args: List[str]) -> dict:
 def main():
     """Main entry point for the package."""
     if len(sys.argv) == 1 or (len(sys.argv) == 2 and sys.argv[1] in ["--help", "-h"]):
-        print("""Usage: urartu action=ACTION_NAME [other_params]
-       urartu pipeline=PIPELINE_NAME [other_params]
-
-Required arguments:
-  action=ACTION_NAME          Name of the action to run (must exist in actions/ directory)
-  pipeline=PIPELINE_NAME      Name of the pipeline to run (must exist in pipelines/ directory)
-
-Optional arguments:
-  debug=true                  Run in debug mode
-  slurm.use_slurm=true       Run on SLURM cluster
-  aim.use_aim=true           Use Aim for experiment tracking
-
-Examples:
-  urartu action=generate aim=aim slurm=slurm
-  urartu pipeline=my_pipeline aim=aim slurm=slurm
-""")
+        print_usage()
         return
 
-    # If we get here, proceed with normal Hydra execution
-    _hydra_main()
+    # Parse CLI arguments
+    pipeline_name, overrides, config_group_selectors = parse_args()
 
-
-@hydra.main(version_base=None, config_path="config", config_name="main")
-def _hydra_main(cfg: DictConfig) -> None:
-    """Hydra main function for running experiments."""
-    hydra_cfg = HydraConfig.get()
+    # Load pipeline config
     cwd = Path.cwd()
+    cfg = load_pipeline_config(pipeline_name, cwd, overrides, config_group_selectors)
+    logging.debug(f"Config group selectors used: {config_group_selectors}")
 
+    # Execute pipeline
+    _execute_pipeline(cfg, cwd)
+
+
+def _execute_pipeline(cfg: DictConfig, cwd: Path) -> None:
+    """Execute a pipeline with the given configuration."""
     # Verify current directory is a Python module
     is_module = cwd.joinpath("__init__.py").exists()
     if not is_module:
@@ -249,321 +221,155 @@ def _hydra_main(cfg: DictConfig) -> None:
         )
         raise FileNotFoundError("Missing 'actions' directory.")
 
-    # Note: pipeline=name and action=name are config groups, not entity name shorthands.
-    # Users should use pipeline_name=name and action_name=name to specify entity names.
-    # However, if pipeline or action are strings (not dicts), they might be from command line overrides.
-    # In that case, we treat them as entity names for backward compatibility.
-    # Use OmegaConf.select() to safely check values without triggering resolution
-    try:
-        pipeline_val = OmegaConf.select(cfg, 'pipeline', default=None)
-        if isinstance(pipeline_val, str) and pipeline_val not in ['???', 'default_pipeline', None]:
-            # Check if this is a config file that exists
-            pipeline_config_path = cwd.joinpath("configs", "pipeline", f"{pipeline_val}.yaml")
-            if not pipeline_config_path.exists():
-                # Not a config file, treat as entity name (backward compatibility)
-                cfg.pipeline_name = pipeline_val
-                # Reset to default pipeline config
-                try:
-                    default_pipeline_path = Path(__file__).parent.parent / "config" / "pipeline" / "default_pipeline.yaml"
-                    if default_pipeline_path.exists():
-                        default_cfg = OmegaConf.load(default_pipeline_path)
-                        cfg.pipeline = default_cfg.get('pipeline', {})
-                except Exception:
-                    try:
-                        cfg.pipeline = {}
-                    except Exception:
-                        pass
-    except Exception:
-        pass
-    
-    try:
-        action_val = OmegaConf.select(cfg, 'action', default=None)
-        if isinstance(action_val, str) and action_val not in ['???', 'default_action', None]:
-            # Check if this is a config file that exists
-            action_config_path = cwd.joinpath("configs", "action", f"{action_val}.yaml")
-            if not action_config_path.exists():
-                # Not a config file, treat as entity name (backward compatibility)
-                cfg.action_name = action_val
-                # Reset to default action config
-                try:
-                    default_action_path = Path(__file__).parent.parent / "config" / "action" / "default_action.yaml"
-                    if default_action_path.exists():
-                        default_cfg = OmegaConf.load(default_action_path)
-                        cfg.action = default_cfg.get('action', {})
-                except Exception:
-                    try:
-                        cfg.action = {}
-                    except Exception:
-                        pass
-    except Exception:
-        pass
-    
-    # Verify specific action or pipeline file exists
-    # Determine entity name - can be action_name or pipeline_name
-    entity_name = None
-    entity_type = None
-    
-    # Check for pipeline_name first (pipelines use pipeline_name)
-    # Use OmegaConf.select() to safely check values without triggering resolution
-    entity_name = None
-    entity_type = None
-    
-    try:
-        pipeline_name_val = OmegaConf.select(cfg, 'pipeline_name', default=None)
-        if pipeline_name_val is not None and pipeline_name_val != '???':
-            entity_name = pipeline_name_val
-            entity_type = 'pipeline'
-    except Exception:
-        pass
-    
-    # Fall back to action_name (actions use action_name, or legacy support)
-    if entity_name is None:
-        try:
-            action_name_val = OmegaConf.select(cfg, 'action_name', default=None)
-            if action_name_val is not None and action_name_val != '???':
-                entity_name = action_name_val
-                entity_type = 'action'  # Will be determined by file existence
-        except Exception:
-            pass
-    
-    if entity_name is None:
-        raise ValueError(
-            "Config must specify either 'action_name' (for actions) or 'pipeline_name' (for pipelines) "
-            "to identify the entity to run"
-        )
-    
-    # Check if it's a pipeline (in pipelines/ directory) or action (in actions/ directory)
-    pipeline_file_path = cwd.joinpath("pipelines", f"{entity_name}.py")
-    action_file_path = cwd.joinpath("actions", f"{entity_name}.py")
-    
-    is_pipeline = pipeline_file_path.exists()
-    is_action = action_file_path.exists()
-    
-    # Update entity_type based on actual file existence
-    if is_pipeline:
-        entity_type = 'pipeline'
-        # Set pipeline_name if not already set
-        try:
-            pipeline_name_val = OmegaConf.select(cfg, 'pipeline_name', default=None)
-            if pipeline_name_val is None or pipeline_name_val == '???':
-                cfg.pipeline_name = entity_name
-        except Exception:
-            cfg.pipeline_name = entity_name
-    elif is_action:
-        entity_type = 'action'
-        # Set action_name if not already set
-        try:
-            action_name_val = OmegaConf.select(cfg, 'action_name', default=None)
-            if action_name_val is None or action_name_val == '???':
-                cfg.action_name = entity_name
-        except Exception:
-            cfg.action_name = entity_name
-    
-    if is_pipeline:
-        logging.info(
-            f"The pipeline file '{pipeline_file_path}' is located and is ready to be used!"
-        )
-        # Check if pipeline config exists and load it from pipeline directory
-        pipeline_name = getattr(cfg, 'pipeline_name', entity_name)
-        pipeline_config_path = cwd.joinpath("configs", "pipeline", f"{pipeline_name}.yaml")
-        if pipeline_config_path.exists():
-            logging.info(f"📋 Loading pipeline config from: {pipeline_config_path}")
-            # Load pipeline config (Hydra will handle defaults via search path)
-            pipeline_cfg = OmegaConf.load(pipeline_config_path)
-            
-            # Merge pipeline section
-            # Note: OmegaConf.merge(base, override) - override takes precedence
-            # We want the loaded config to override defaults, so put defaults first
-            if 'pipeline' in pipeline_cfg:
-                # Get current pipeline config (might be from defaults)
-                current_pipeline = cfg.get('pipeline', {})
-                if not current_pipeline:
-                    current_pipeline = {}
-                # Merge: defaults first, then loaded config (loaded config overrides defaults)
-                merged_pipeline = OmegaConf.merge(
-                    OmegaConf.create(current_pipeline) if not isinstance(current_pipeline, DictConfig) else current_pipeline,
-                    pipeline_cfg.pipeline
-                )
-                cfg.pipeline = merged_pipeline
-                logging.info(f"📋 Merged pipeline config with {len(merged_pipeline.get('actions', []))} actions")
-            
-            # Merge other top-level keys (like pipeline_name, debug, etc.)
-            for key in pipeline_cfg:
-                if key not in ['pipeline', 'defaults']:
-                    # Special handling for pipeline_name
-                    if key == 'pipeline_name':
-                        cfg.pipeline_name = pipeline_cfg[key]
-                    # Only override if the value in main config is None or missing
-                    elif not hasattr(cfg, key) or cfg[key] is None:
-                        cfg[key] = pipeline_cfg[key]
-                    # Or if the pipeline config explicitly sets it (non-None value)
-                    elif pipeline_cfg[key] is not None:
-                        cfg[key] = pipeline_cfg[key]
-        else:
-            logging.warning(
-                f"⚠️  Pipeline config not found at {pipeline_config_path}. "
-                f"Using default pipeline configuration."
-            )
-    elif is_action:
-        logging.info(
-            f"The action file '{action_file_path}' is located and is ready to be used!"
-        )
-        # Check if action config exists and load it from action directory
-        action_name = getattr(cfg, 'action_name', entity_name)
-        action_config_path = cwd.joinpath("configs", "action", f"{action_name}.yaml")
-        if action_config_path.exists():
-            logging.info(f"📋 Loading action config from: {action_config_path}")
-            # Load action config (Hydra will handle defaults via search path)
-            action_cfg = OmegaConf.load(action_config_path)
-            
-            # Merge action section
-            if 'action' in action_cfg:
-                cfg.action = OmegaConf.merge(cfg.action, action_cfg.action)
-            
-            # Merge other top-level keys (like action_name, debug, etc.)
-            for key in action_cfg:
-                if key not in ['action', 'defaults']:
-                    # Special handling for action_name
-                    if key == 'action_name':
-                        cfg.action_name = action_cfg[key]
-                    # Only override if the value in main config is None or missing
-                    elif not hasattr(cfg, key) or cfg[key] is None:
-                        cfg[key] = action_cfg[key]
-                    # Or if the action config explicitly sets it (non-None value)
-                    elif action_cfg[key] is not None:
-                        cfg[key] = action_cfg[key]
-        else:
-            logging.warning(
-                f"⚠️  Action config not found at {action_config_path}. "
-                f"Using default action configuration."
-            )
-    else:
-        logging.error(
-            f"Neither action nor pipeline file found for '{entity_name}'."
-            f" Checked: {action_file_path} and {pipeline_file_path}."
-            " Please ensure that the file exists in either the 'actions' or 'pipelines' directory."
-        )
-        raise FileNotFoundError("Missing action or pipeline file.")
-    
-    # Set the appropriate name field for consistency
-    # Note: run_dir uses oc.select to choose pipeline_name or action_name automatically
-    # We need to set the unused name to None BEFORE resolving to avoid interpolation errors
-    # oc.select will fail if one of the values is still ??? (mandatory missing)
-    # Convert to container, modify, and recreate to avoid triggering resolution of ??? values
-    if is_pipeline:
-        cfg.pipeline_name = entity_name
-        # Set action_name to None for pipelines to avoid interpolation errors in run_dir
-        # Convert to container to safely modify without triggering resolution
-        try:
-            cfg_dict = OmegaConf.to_container(cfg, resolve=False)
-            cfg_dict['action_name'] = None
-            cfg = OmegaConf.create(cfg_dict)
-        except Exception:
-            # Fallback: try direct assignment (might fail if action_name is ???)
-            try:
-                cfg.action_name = None
-            except Exception:
-                pass
-    elif is_action:
-        cfg.action_name = entity_name
-        # Set pipeline_name to None for actions to avoid interpolation errors in run_dir
-        # Convert to container to safely modify without triggering resolution
-        try:
-            cfg_dict = OmegaConf.to_container(cfg, resolve=False)
-            cfg_dict['pipeline_name'] = None
-            cfg = OmegaConf.create(cfg_dict)
-        except Exception:
-            # Fallback: try direct assignment (might fail if pipeline_name is ???)
-            try:
-                cfg.pipeline_name = None
-            except Exception:
-                pass
-    
-    # Now resolve the config after loading the appropriate config file
-    # At this point, both pipeline_name and action_name are set (one to entity_name, one to None)
-    # so oc.select in run_dir will work correctly
-    # Preserve the pipeline config structure during resolution (especially the actions list)
-    pipeline_backup = None
-    if is_pipeline and hasattr(cfg, 'pipeline'):
-        pipeline_backup = OmegaConf.to_container(cfg.pipeline, resolve=False)
-        logging.info(f"📋 Backing up pipeline config with {len(pipeline_backup.get('actions', []))} actions before resolution")
-    cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True, enum_to_str=True))
-    # Always restore pipeline config after resolution to ensure actions are preserved
-    if is_pipeline and pipeline_backup is not None:
-        current_pipeline = cfg.get('pipeline', {})
-        if not current_pipeline or 'actions' not in current_pipeline:
-            cfg.pipeline = OmegaConf.merge(current_pipeline or {}, pipeline_backup)
-            logging.info(f"📋 Restored pipeline config with {len(cfg.pipeline.get('actions', []))} actions after resolution")
-        else:
-            logging.info(f"📋 Pipeline config preserved with {len(cfg.pipeline.get('actions', []))} actions after resolution")
+    # Get pipeline name from config
+    pipeline_name = cfg.get('pipeline_name')
+    if not pipeline_name:
+        raise ValueError("Config must specify 'pipeline_name' to identify the pipeline to run")
 
-    if cfg.machine.type == "remote":
-        launch_remote(cfg=cfg)
-        return
+    # Verify pipeline file exists
+    pipeline_file_path = cwd.joinpath("pipelines", f"{pipeline_name}.py")
+    if not pipeline_file_path.exists():
+        raise FileNotFoundError(
+            f"Pipeline file not found: {pipeline_file_path}. " "Please ensure that the pipeline file exists in the 'pipelines' directory."
+        )
 
-    is_multirun = hydra_cfg.mode.name == "MULTIRUN"
+    logging.info(f"The pipeline file '{pipeline_file_path}' is located and is ready to be used!")
 
-    if is_multirun:
-        run_dir = Path(hydra_cfg.runtime.output_dir, hydra_cfg.job.id).parent
-    else:
-        run_dir = Path(cfg.run_dir)
-        if cfg.debug:
-            parts = list(Path(run_dir).parts)
+    # Set run_dir - only create new one if not already set (e.g., from CLI override)
+    if not cfg.get('run_dir') or cfg.get('run_dir') == '':
+        # No run_dir specified, create a new timestamp-based one
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        run_dir = Path(f".runs/{pipeline_name}/{timestamp}")
+        if cfg.get('debug', False):
+            parts = list(run_dir.parts)
             parts.insert(-1, "debug")
             run_dir = Path(*parts)
         os.makedirs(run_dir, exist_ok=True)
+        cfg.run_dir = str(run_dir)
+    else:
+        # run_dir already set (e.g., from CLI override or remote execution)
+        # Just ensure the directory exists
+        run_dir = Path(cfg.run_dir)
+        os.makedirs(run_dir, exist_ok=True)
+        logging.info(f"Using existing run_dir from config: {run_dir}")
 
-    # Handle description field (general field, not AIM-specific)
-    # Prefer general description field, fall back to description and cfg.aim.description for backward compatibility
-    description = None
-    if hasattr(cfg, 'descr') and cfg.descr:
-        description = cfg.descr
-    elif hasattr(cfg, 'description') and cfg.description:
-        description = cfg.description
-    elif hasattr(cfg, 'aim') and hasattr(cfg.aim, 'description') and cfg.aim.description:
-        description = cfg.aim.description
+    # Set up logging BEFORE checking for remote execution
+    # This ensures sync and launch logs are captured locally
+    # Use OmegaConf.select for DictConfig to properly access nested configs
+    aim_cfg = OmegaConf.select(cfg, 'aim', default=None)
+    if aim_cfg is None:
+        aim_cfg = {}
+        use_aim = False
+    elif isinstance(aim_cfg, DictConfig) or isinstance(aim_cfg, dict):
+        use_aim = aim_cfg.get('use_aim', False)
+    else:
+        use_aim = False
 
+    # Set up AIM if needed (for local logging)
     aim_run = None
-    if cfg.aim.use_aim:
-        # Get experiment name - use pipeline_name for pipelines, action_name for actions
-        entity_name_for_aim = getattr(cfg, 'pipeline_name', None) or getattr(cfg, 'action_name', None)
+    if use_aim:
+        # Get experiment name from pipeline config
         if hasattr(cfg, 'pipeline') and cfg.pipeline and 'experiment_name' in cfg.pipeline:
             experiment_name = cfg.pipeline.experiment_name
-        elif hasattr(cfg, 'action') and cfg.action and 'experiment_name' in cfg.action:
-            experiment_name = cfg.action.experiment_name
         else:
-            experiment_name = entity_name_for_aim
-        
+            experiment_name = pipeline_name
+
         aim_run = Run(
-            repo=cfg.aim.repo,
+            repo=aim_cfg.get('repo', '.aim'),
             experiment=experiment_name,
-            log_system_params=cfg.aim.log_system_params,
+            log_system_params=aim_cfg.get('log_system_params', True),
         )
         aim_run.set("cfg", cfg, strict=False)
-        if cfg.debug:
+        if cfg.get('debug', False):
             aim_run.add_tag("debug")
-        # Set AIM description if description is provided
-        if description:
-            aim_run.description = description
-        cfg.aim.hash = aim_run.hash
+        # Update cfg.aim.hash safely
+        if isinstance(aim_cfg, DictConfig) or isinstance(aim_cfg, dict):
+            if isinstance(aim_cfg, DictConfig):
+                # For DictConfig, use OmegaConf.update
+                OmegaConf.set(cfg, 'aim.hash', aim_run.hash)
+            else:
+                aim_cfg['hash'] = aim_run.hash
+                cfg.aim = aim_cfg
 
-    if cfg.aim.use_aim:
+    # Set up logging to file
+    if use_aim and aim_run:
         log_file = run_dir.joinpath(f"{aim_run.hash}.log")
     else:
         log_file = run_dir.joinpath("output.log")
 
+    # Create a custom file handler that flushes immediately
+    class ImmediateFlushFileHandler(logging.FileHandler):
+        def emit(self, record):
+            super().emit(record)
+            self.flush()  # Force immediate write to disk
+
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
-    file_handler = logging.FileHandler(log_file)
+
+    # Check if log file already exists (for appending)
+    log_exists = log_file.exists()
+
+    # Use append mode to preserve previous runs' logs
+    file_handler = ImmediateFlushFileHandler(log_file, mode='a', encoding='utf-8')
     stream_handler = logging.StreamHandler()
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     file_handler.setFormatter(formatter)
     stream_handler.setFormatter(formatter)
     root_logger.handlers = [file_handler, stream_handler]
-    
-    # Log description if provided (appears in both console and log file)
+
+    # Add separator if appending to existing log
+    if log_exists:
+        separator = "\n" + "=" * 80 + "\n"
+        separator += f"New run started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        separator += "=" * 80 + "\n"
+        # Write separator directly to file (before first log message)
+        file_handler.stream.write(separator)
+        file_handler.flush()
+
+    logging.info(f"📁 Set run_dir to: {cfg.run_dir}")
+
+    # Handle description field
+    description = None
+    if hasattr(cfg, 'descr') and cfg.descr:
+        description = cfg.descr
+    elif hasattr(cfg, 'description') and cfg.description:
+        description = cfg.description
+    elif (isinstance(aim_cfg, DictConfig) or isinstance(aim_cfg, dict)) and hasattr(aim_cfg, 'description') and aim_cfg.description:
+        description = aim_cfg.description
+
+    # Log description if provided
     if description:
         logging.info(f"📝 Description: {description}")
+        if aim_run:
+            aim_run.description = description
+
+    # Check for remote execution
+    # Use OmegaConf.select for DictConfig to properly access nested configs
+    machine_cfg = OmegaConf.select(cfg, 'machine', default=None)
+
+    if machine_cfg is None:
+        machine_type = 'local'
+        logging.debug("No machine config found, defaulting to 'local'")
+    elif isinstance(machine_cfg, DictConfig) or isinstance(machine_cfg, dict):
+        # Handle both DictConfig and dict
+        machine_type = machine_cfg.get('type', 'local')
+        logging.debug(f"Machine config found: type={machine_type}, full config: {machine_cfg}")
+    else:
+        # Handle case where machine is a string (e.g., "local")
+        machine_type = str(machine_cfg) if machine_cfg else 'local'
+        logging.debug(f"Machine config is a string: {machine_type}")
+
+    if machine_type == "remote":
+        logging.info(f"🚀 Remote execution detected (machine type: {machine_type}), launching on remote machine...")
+        # Save config to file for reference
+        cfg_file = run_dir.joinpath("cfg.yaml")
+        with open(cfg_file, "w") as f:
+            OmegaConf.save(cfg, f)
+        logging.info(f"💾 Saved config to: {cfg_file}")
+        launch_remote(cfg=cfg)
+        return
+    else:
+        logging.debug(f"Local execution (machine type: {machine_type})")
 
     class TeeHandler:
         def __init__(self, filename, stream):
@@ -592,7 +398,16 @@ def _hydra_main(cfg: DictConfig) -> None:
     sys.stderr = TeeHandler(log_file, sys.stderr)
 
     cfg.run_dir = str(run_dir)
-    if cfg.aim.use_aim:
+    # Re-check aim_cfg (already set above, but ensure consistency)
+    aim_cfg = OmegaConf.select(cfg, 'aim', default=None)
+    if aim_cfg is None:
+        aim_cfg = {}
+        use_aim = False
+    elif isinstance(aim_cfg, DictConfig) or isinstance(aim_cfg, dict):
+        use_aim = aim_cfg.get('use_aim', False)
+    else:
+        use_aim = False
+    if use_aim and aim_run:
         with open(run_dir.joinpath(f"{aim_run.hash}.yaml"), "w") as f:
             OmegaConf.save(config=cfg, f=f)
     else:
@@ -600,20 +415,35 @@ def _hydra_main(cfg: DictConfig) -> None:
             OmegaConf.save(config=cfg, f=f)
 
     try:
-        if cfg.slurm.use_slurm:
+        # Use OmegaConf.select for DictConfig to properly access nested configs
+        slurm_cfg = OmegaConf.select(cfg, 'slurm', default=None)
+
+        if slurm_cfg is None:
+            use_slurm = False
+            logging.debug("No SLURM config found")
+        elif isinstance(slurm_cfg, DictConfig) or isinstance(slurm_cfg, dict):
+            # Handle both DictConfig and dict
+            use_slurm = slurm_cfg.get('use_slurm', False)
+            logging.info(
+                f"SLURM config check: slurm_cfg type={type(slurm_cfg)}, keys={list(slurm_cfg.keys()) if hasattr(slurm_cfg, 'keys') else 'N/A'}, use_slurm={use_slurm}"
+            )
+            logging.debug(f"SLURM config full: {slurm_cfg}")
+        else:
+            # Handle case where slurm is a string (shouldn't happen, but be safe)
+            use_slurm = False
+            logging.warning(f"SLURM config is not a dict/DictConfig: {type(slurm_cfg)}")
+
+        if use_slurm:
+            logging.info(f"🚀 SLURM execution detected (use_slurm: {use_slurm}), submitting to SLURM...")
             try:
                 import submitit  # NOQA
             except ImportError:
-                raise ImportError(
-                    "Please 'pip install submitit' to schedule jobs on SLURM"
-                )
+                raise ImportError("Please 'pip install submitit' to schedule jobs on SLURM")
 
             try:
-                # Use pipeline_name for pipelines, action_name for actions
-                entity_name = getattr(cfg, 'pipeline_name', None) or getattr(cfg, 'action_name', None)
                 launch_on_slurm(
                     module=cwd,
-                    action_name=entity_name,
+                    action_name=pipeline_name,
                     cfg=cfg,
                     aim_run=aim_run,
                 )
@@ -625,31 +455,25 @@ def _hydra_main(cfg: DictConfig) -> None:
                 raise
             except RuntimeError as e:
                 if "Could not detect 'srun'" in str(e):
-                    logging.error(
-                        "Not running on a SLURM cluster or 'srun' command not available"
-                    )
+                    logging.error("Not running on a SLURM cluster or 'srun' command not available")
                 else:
                     logging.error(f"Runtime error during SLURM job execution: {e}")
                 raise
         else:
             try:
-                # Use pipeline_name for pipelines, action_name for actions
-                entity_name = getattr(cfg, 'pipeline_name', None) or getattr(cfg, 'action_name', None)
                 # Debug: verify pipeline config before launching
-                if is_pipeline and hasattr(cfg, 'pipeline'):
+                if hasattr(cfg, 'pipeline'):
                     pipeline_keys = list(cfg.pipeline.keys()) if hasattr(cfg.pipeline, 'keys') else []
                     actions_count = len(cfg.pipeline.actions) if 'actions' in cfg.pipeline else 0
                     logging.info(f"🚀 Launching pipeline with cfg.pipeline keys: {pipeline_keys[:10]}, actions: {actions_count}")
                 launch(
                     module=cwd,
-                    action_name=entity_name,
+                    action_name=pipeline_name,
                     cfg=cfg,
                     aim_run=aim_run,
                 )
             except ImportError as e:
-                logging.error(
-                    f"Failed to import required module for local execution: {e}"
-                )
+                logging.error(f"Failed to import required module for local execution: {e}")
                 raise
             except Exception as e:
                 logging.error(f"Error during local job execution: {e}")

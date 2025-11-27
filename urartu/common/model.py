@@ -1,7 +1,8 @@
 from typing import Any, Dict, List
 
-import hydra
 from transformers import AutoModelForCausalLM
+
+from urartu.utils.instantiate import instantiate
 
 
 class Model:
@@ -42,7 +43,8 @@ class Model:
         Returns:
             Any: The instantiated model, which type depends on the configuration specifics.
         """
-        return hydra.utils.instantiate(cfg.type, cfg)
+        # Hydra-style: instantiate(cfg.type, cfg) where cfg.type has _target_ and cfg has additional params
+        return instantiate(cfg.type, cfg)
 
     @property
     def model(self):

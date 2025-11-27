@@ -1,8 +1,9 @@
 import logging
 from typing import Any, Dict, List
 
-import hydra
 from torch.utils.data import DataLoader
+
+from urartu.utils.instantiate import instantiate
 
 # Configure logging
 logging.basicConfig(level=logging.WARNING)
@@ -50,7 +51,8 @@ class Dataset:
         This method utilizes Hydra's instantiation utility to create a dataset object based on a type
         specification and additional parameters provided in the configuration dictionary.
         """
-        return hydra.utils.instantiate(cfg.type, cfg)
+        # Hydra-style: instantiate(cfg.type, cfg) where cfg.type has _target_ and cfg has additional params
+        return instantiate(cfg.type, cfg)
 
     def _get_dataset(self):
         """

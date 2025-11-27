@@ -1,9 +1,15 @@
+import logging
+import re
+from typing import List, Optional
+
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from urartu.common.device import Device
 from urartu.common.model import Model
 from urartu.utils.dtype import eval_dtype
+
+logger = logging.getLogger(__name__)
 
 
 class ModelForCausalLM(Model):
@@ -14,7 +20,7 @@ class ModelForCausalLM(Model):
 
     Attributes:
         cfg: An object containing configuration settings such as model name, cache directory,
-             API token, and other model-specific settings.
+             API token, and other model-specific settings. Should be a DictConfig for attribute access.
 
     Methods:
         model: Returns a causal language model with preloaded configurations.
@@ -29,6 +35,7 @@ class ModelForCausalLM(Model):
         Args:
             cfg: Configuration object containing necessary parameters like model name,
                  cache directory, device mapping, dtype evaluation, and optional API token.
+                 Should be a DictConfig (passed from instantiate).
         """
         super().__init__(cfg)
         self._tokenizer = None
@@ -57,11 +64,8 @@ class ModelForCausalLM(Model):
             # Add attn_implementation if specified (needed for attention weight extraction)
             if self.cfg.get("attn_implementation") is not None:
                 from_pretrained_kwargs["attn_implementation"] = self.cfg.get("attn_implementation")
-            
-            self._model = AutoModelForCausalLM.from_pretrained(
-                self.cfg.name,
-                **from_pretrained_kwargs
-            )
+
+            self._model = AutoModelForCausalLM.from_pretrained(self.cfg.name, **from_pretrained_kwargs)
             for param in self._model.parameters():
                 param.requires_grad = False
             self._model.eval()
@@ -100,19 +104,13 @@ class ModelForCausalLM(Model):
             generate_cfg = self.cfg.get("generate")
         self.model.eval()
 
-        prompt_tokenized = self.tokenizer(
-            prompt, return_tensors="pt", padding=True, truncation=True
-        )
+        prompt_tokenized = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
         prompt_tensor = prompt_tokenized["input_ids"].to(self.model.device)
         attention_mask = prompt_tokenized["attention_mask"].to(self.model.device)
         with torch.no_grad():
-            output_tokenized = self.model.generate(
-                input_ids=prompt_tensor, attention_mask=attention_mask, **generate_cfg
-            )
+            output_tokenized = self.model.generate(input_ids=prompt_tensor, attention_mask=attention_mask, **generate_cfg)
         if "output_scores" in generate_cfg:
-            output = self.tokenizer.decode(
-                output_tokenized["sequences"][0], skip_special_tokens=True
-            )
+            output = self.tokenizer.decode(output_tokenized["sequences"][0], skip_special_tokens=True)
             scores = output_tokenized["scores"]
             if isinstance(scores, (list, tuple)):
                 # For single generation, scores are per token, stack them to have shape (num_tokens, vocab_size)
@@ -130,25 +128,19 @@ class ModelForCausalLM(Model):
         self.model.eval()
 
         # Tokenize the batch of prompts
-        self.tokenizer.padding_side = "left" # For decoder-only models
-        prompt_tokenized = self.tokenizer(
-            prompts, return_tensors="pt", padding=True, truncation=True
-        )
+        self.tokenizer.padding_side = "left"  # For decoder-only models
+        prompt_tokenized = self.tokenizer(prompts, return_tensors="pt", padding=True, truncation=True)
         prompt_tensor = prompt_tokenized["input_ids"].to(self.model.device)
         attention_mask = prompt_tokenized["attention_mask"].to(self.model.device)
-        
+
         with torch.no_grad():
-            output_tokenized = self.model.generate(
-                input_ids=prompt_tensor, attention_mask=attention_mask, **generate_cfg
-            )
-        
+            output_tokenized = self.model.generate(input_ids=prompt_tensor, attention_mask=attention_mask, **generate_cfg)
+
         if "output_scores" in generate_cfg:
             # Decode all sequences in the batch
-            outputs = self.tokenizer.batch_decode(
-                output_tokenized.sequences, skip_special_tokens=True
-            )
-            
-            # Scores is a tuple of tensors (one for each generated token). 
+            outputs = self.tokenizer.batch_decode(output_tokenized.sequences, skip_special_tokens=True)
+
+            # Scores is a tuple of tensors (one for each generated token).
             # Each tensor is of shape (batch_size, vocab_size).
             # We stack them to get a tensor of shape (num_generated_tokens, batch_size, vocab_size).
             scores_stacked = torch.stack(output_tokenized.scores, dim=0)

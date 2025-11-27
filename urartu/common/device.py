@@ -31,9 +31,7 @@ class Device:
         if device_name == "auto":
             Device.DEVICE = "auto"
         elif device_name == "cuda":
-            assert (
-                device_name == "cuda" and torch.cuda.is_available()
-            ), "CUDA is not available on this system."
+            assert device_name == "cuda" and torch.cuda.is_available(), "CUDA is not available on this system."
             Device.DEVICE = torch.device("cuda")
         else:
             Device.DEVICE = torch.device("cpu")
