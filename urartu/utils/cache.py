@@ -8,6 +8,7 @@ cache sharing.
 
 import hashlib
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -25,9 +26,12 @@ def make_serializable(obj: Any) -> Any:
 
     Handles:
     - DictConfig and OmegaConf objects
-    - Path objects
+    - Path objects (normalized to portable paths if within .runs)
     - Sets (converted to sorted lists)
     - Other non-serializable types
+
+    CRITICAL: Paths within .runs are normalized to portable format to ensure
+    consistent cache keys across different mount points or working directories.
     """
     if isinstance(obj, (DictConfig, dict)):
         if isinstance(obj, DictConfig):
@@ -38,9 +42,31 @@ def make_serializable(obj: Any) -> Any:
     elif isinstance(obj, set):
         return sorted([make_serializable(item) for item in obj])
     elif isinstance(obj, Path):
-        # Use string representation for paths
-        return str(obj)
-    elif isinstance(obj, (str, int, float, bool, type(None))):
+        # Normalize paths to portable format if they're within .runs
+        # This ensures consistent cache keys regardless of where .runs is mounted
+        # Use Urartu's _make_path_portable function for consistent normalization
+        from urartu.common.action import Action
+
+        path_str = str(obj)
+        portable_path = Action._make_path_portable(path_str)
+        return portable_path
+    elif isinstance(obj, str):
+        # Check if string is a path that should be normalized
+        # Use Urartu's _make_path_portable function for consistent normalization
+        from urartu.common.action import Action
+
+        if obj and (
+            obj.startswith('.runs/')
+            or obj.startswith('.runs\\')
+            or '/.runs/' in obj
+            or '\\.runs\\' in obj
+            or obj.startswith('/')
+            or (len(obj) > 2 and obj[1] == ':')
+        ):
+            portable_path = Action._make_path_portable(obj)
+            return portable_path
+        return obj
+    elif isinstance(obj, (int, float, bool, type(None))):
         return obj
     else:
         # For other types, try to convert to string
@@ -67,7 +93,27 @@ def filter_config_for_cache(config: Dict[str, Any], ignore_keys: Optional[set] =
     if isinstance(config, DictConfig):
         config = OmegaConf.to_container(config, resolve=True)
 
-    filtered = {k: v for k, v in config.items() if k not in ignore_keys}
+    def filter_recursive(obj: Any) -> Any:
+        """Recursively filter config, removing 'hash' fields from nested dicts."""
+        if isinstance(obj, dict):
+            filtered = {}
+            for k, v in obj.items():
+                # Skip top-level ignored keys
+                if k in ignore_keys:
+                    continue
+                # Skip 'hash' fields in nested dicts (e.g., dataset.hash) - these are derived fields
+                # that depend on the config itself, so including them would cause cache mismatches
+                if k == 'hash':
+                    continue
+                # Recursively filter nested structures
+                filtered[k] = filter_recursive(v)
+            return filtered
+        elif isinstance(obj, list):
+            return [filter_recursive(item) for item in obj]
+        else:
+            return obj
+
+    filtered = filter_recursive(config)
     return filtered
 
 
@@ -98,6 +144,14 @@ class CacheKeyGenerator:
         filtered_config = filter_config_for_cache(config)
         serializable_config = make_serializable(filtered_config)
 
+        # Check if pipeline-specific fields leaked through after filtering
+        pipeline_specific_in_filtered = [
+            k for k in serializable_config.keys() if k in ['experiment_name', 'pipeline_name', 'pipeline_id', 'pipeline_config_hash']
+        ]
+        if pipeline_specific_in_filtered:
+            logger.error(f"❌ CRITICAL: Pipeline-specific fields found in filtered config for {action_name}: {pipeline_specific_in_filtered}")
+            logger.error(f"   These should have been filtered out by CACHE_IGNORE_KEYS!")
+
         # Build key factors
         key_factors = {'action_name': action_name, 'config': serializable_config}
 
@@ -107,6 +161,12 @@ class CacheKeyGenerator:
 
         # Convert to JSON for consistent ordering
         key_string = json.dumps(key_factors, sort_keys=True)
+
+        # Debug: Log the actual config values being hashed (first iteration only to avoid spam)
+        if logger.isEnabledFor(logging.DEBUG):
+            config_str = json.dumps(serializable_config, sort_keys=True)
+            logger.debug(f"  Config JSON (first 500 chars): {config_str[:500]}...")
+            logger.debug(f"  Full key_string hash input (first 500 chars): {key_string[:500]}...")
 
         # Generate hash
         config_hash = hashlib.sha256(key_string.encode()).hexdigest()[:16]

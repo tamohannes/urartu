@@ -4,14 +4,15 @@ Pipeline status display.
 This module handles displaying pipeline execution status with progress tracking.
 """
 
-import logging
 import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from urartu.utils.logging import get_logger
+
 from .pipeline_action import PipelineAction
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class PipelineStatusDisplay:

@@ -524,16 +524,24 @@ class Pipeline:
         logger.debug(f"🔍 DEBUG: Available action_outputs before resolution: {list(self.action_outputs.keys())}")
         for name, output in self.action_outputs.items():
             # Handle both ActionOutput (regular actions) and dict (loopable actions)
-            if isinstance(output, dict) and not isinstance(output, ActionOutput):
-                # Loopable action - show iterations
-                iterations_info = ", ".join(
-                    [f"{iter_id}: {len(iter_output.outputs) if iter_output.outputs else 0} keys" for iter_id, iter_output in output.items()]
-                )
-                logger.debug(f"   - {name}: loopable action with iterations: {iterations_info}")
-            elif isinstance(output, ActionOutput):
+            # Check ActionOutput first (it might be dict-like)
+            if isinstance(output, ActionOutput):
                 logger.debug(f"   - {name}: outputs={list(output.outputs.keys()) if output.outputs else 'None'}")
+            elif isinstance(output, dict):
+                # Loopable action - show iterations
+                try:
+                    iterations_info = ", ".join(
+                        [
+                            f"{iter_id}: {len(iter_output.outputs) if isinstance(iter_output, ActionOutput) and iter_output.outputs else 0} keys"
+                            for iter_id, iter_output in output.items()
+                            if isinstance(iter_output, ActionOutput)
+                        ]
+                    )
+                    logger.debug(f"   - {name}: loopable action with iterations: {iterations_info}")
+                except Exception as e:
+                    logger.debug(f"   - {name}: dict but error processing: {e}, type={type(output)}")
             else:
-                logger.debug(f"   - {name}: unknown type {type(output)}")
+                logger.debug(f"   - {name}: unknown type {type(output)}, value={str(output)[:100]}")
 
         # DEBUG: Write to file
         debug_file = Path(self.cfg.run_dir) / "pipeline_debug.txt"
@@ -543,14 +551,18 @@ class Pipeline:
             f.write(f"Available action_outputs: {list(self.action_outputs.keys())}\n")
             for name, output in self.action_outputs.items():
                 # Handle both ActionOutput (regular actions) and dict (loopable actions)
-                if isinstance(output, dict) and not isinstance(output, ActionOutput):
+                # Check ActionOutput first (it might be dict-like)
+                if isinstance(output, ActionOutput):
+                    f.write(f"  {name}: {list(output.outputs.keys()) if output.outputs else 'None'}\n")
+                elif isinstance(output, dict):
                     # Loopable action - show iterations
                     for iter_id, iter_output in output.items():
-                        f.write(f"  {name}[{iter_id}]: {list(iter_output.outputs.keys()) if iter_output.outputs else 'None'}\n")
-                elif isinstance(output, ActionOutput):
-                    f.write(f"  {name}: {list(output.outputs.keys()) if output.outputs else 'None'}\n")
+                        if isinstance(iter_output, ActionOutput):
+                            f.write(f"  {name}[{iter_id}]: {list(iter_output.outputs.keys()) if iter_output.outputs else 'None'}\n")
+                        else:
+                            f.write(f"  {name}[{iter_id}]: unknown type {type(iter_output)}\n")
                 else:
-                    f.write(f"  {name}: unknown type {type(output)}\n")
+                    f.write(f"  {name}: unknown type {type(output)}, value={str(output)[:100]}\n")
             f.write(f"Config overrides before resolution: {str(pipeline_action.config_overrides)[:500]}\n")
 
         # Resolve config overrides to handle any references
@@ -859,6 +871,16 @@ class Pipeline:
             else:
                 raise AttributeError(f"Action {pipeline_action.action_name} has no run() or main() method")
 
+            # Always call create_plots() if it exists, even if action was cached
+            # This ensures plots are always regenerated from cached data
+            if hasattr(action_instance, 'create_plots'):
+                logger.debug(f"📊 Calling create_plots() for action {pipeline_action.name}")
+                try:
+                    action_instance.create_plots()
+                except Exception as e:
+                    logger.error(f"❌ Error in create_plots() for {pipeline_action.name}: {e}", exc_info=True)
+                    # Don't fail the pipeline if plotting fails, just log the error
+
             # Extract outputs
             outputs = self._extract_outputs(pipeline_action, action_instance)
             logger.debug(f"🔍 DEBUG: Extracted outputs from {pipeline_action.name}: {list(outputs.keys()) if outputs else 'None'}")
@@ -1078,7 +1100,9 @@ class Pipeline:
                 "outputs": {name: output.outputs for name, output in self.action_outputs.items()},
             }
 
-    def _generate_cache_key(self, pipeline_action: PipelineAction, resolved_config: Dict[str, Any]) -> str:
+    def _generate_cache_key(
+        self, pipeline_action: PipelineAction, resolved_config: Dict[str, Any], loop_configs: Optional[Dict[str, Any]] = None
+    ) -> str:
         """
         Generate a unique cache key for an action based on its configuration.
 
@@ -1087,6 +1111,7 @@ class Pipeline:
         Args:
             pipeline_action: The pipeline action
             resolved_config: The resolved configuration (with references resolved)
+            loop_configs: Optional loop_configs dict for cross-pipeline cache sharing
 
         Returns:
             A unique cache key string
@@ -1098,19 +1123,17 @@ class Pipeline:
         if self.action_outputs:
             previous_outputs = {name: output.outputs for name, output in self.action_outputs.items()}
 
-        # Get pipeline config hash if available
+        # CRITICAL: Do NOT include pipeline_config_hash in cache key for absolute cache sharing
+        # Cache should depend only on action config and previous outputs, not pipeline structure
+        # This enables cross-pipeline cache sharing when actions have identical configs and inputs
         pipeline_config_hash = None
-        try:
-            pipeline_config_hash = PipelineCache.generate_config_hash(self.cfg)
-        except Exception:
-            pass
 
         # Use unified cache key generator
         cache_key = CacheKeyGenerator.generate_pipeline_action_cache_key(
             action_name=pipeline_action.action_name,
             config_overrides=resolved_config,
             previous_outputs=previous_outputs,
-            pipeline_config_hash=pipeline_config_hash,
+            pipeline_config_hash=pipeline_config_hash,  # Always None for absolute cache sharing
         )
 
         return cache_key
@@ -1124,6 +1147,9 @@ class Pipeline:
                 pipeline_action = action
                 break
 
+        # Get pipeline common configs to include in metadata (same as when action runs)
+        pipeline_common_configs = self._get_common_pipeline_configs()
+
         self.cache_manager.save_to_cache(
             cache_key=cache_key,
             action_output=action_output,
@@ -1131,6 +1157,7 @@ class Pipeline:
             pipeline_action=pipeline_action,
             resolve_value_func=self._resolve_value,
             get_config_hash_func=self._get_config_hash,
+            pipeline_common_configs=pipeline_common_configs,
         )
 
     def _load_from_cache(self, cache_key: str) -> Optional[CacheEntry]:
@@ -1143,6 +1170,15 @@ class Pipeline:
 
     def main(self):
         """Convenience method that calls initialize() and run()."""
+        # Check if this is a submission-only job (for loopable pipelines)
+        submit_array_only = self.cfg.get('_submit_array_only', False)
+        if submit_array_only:
+            # For loopable pipelines, this will be handled in run()
+            # But we still need to initialize to get loop_iterations
+            self.initialize()
+            self.run()  # run() will check _submit_array_only and exit early
+            return
+
         self.initialize()
         self.run()
 

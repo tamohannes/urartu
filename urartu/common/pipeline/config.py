@@ -101,13 +101,15 @@ class ConfigInjector:
             for dep_action_name in depends_on.keys():
                 if dep_action_name in self.loopable_actions:
                     # This is an aggregator action - provide all iteration outputs
+                    # Use lazy loading: pass ActionOutput objects instead of copying outputs dicts
+                    # This avoids copying large data structures into the config
                     all_iteration_outputs = get_iteration_outputs(dep_action_name)
-                    # Store as a special key that aggregator can access
-                    all_iterations_data = {iter_id: output.outputs for iter_id, output in all_iteration_outputs.items()}
-                    action_outputs_dict[f"{dep_action_name}_all_iterations"] = all_iterations_data
+                    # Store ActionOutput objects directly (they contain paths, not full data)
+                    # The aggregator will load pickle files on-demand
+                    action_outputs_dict[f"{dep_action_name}_all_iterations"] = all_iteration_outputs
                     # Also inject directly into action_config_dict so aggregator can access it
-                    action_config_dict[f"{dep_action_name}_all_iterations"] = all_iterations_data
-                    logger.debug(f"📦 Provided all iteration outputs for aggregator action '{current_action_name}' from '{dep_action_name}'")
+                    action_config_dict[f"{dep_action_name}_all_iterations"] = all_iteration_outputs
+                    logger.debug(f"📦 Provided {len(all_iteration_outputs)} iteration outputs for aggregator action '{current_action_name}' from '{dep_action_name}'")
 
         # Create resolver and resolve dependencies
         resolver = DependencyResolver(action_outputs_dict)

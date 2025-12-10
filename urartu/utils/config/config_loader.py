@@ -5,7 +5,6 @@ Supports hierarchical config includes, config merging, and variable interpolatio
 using OmegaConf.
 """
 
-import logging
 import os
 import pwd
 from datetime import datetime
@@ -14,7 +13,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from omegaconf import DictConfig, OmegaConf
 
-logger = logging.getLogger(__name__)
+from urartu.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 # Get current user for user-specific configs
 try:

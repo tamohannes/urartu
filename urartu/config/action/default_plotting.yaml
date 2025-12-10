@@ -1,0 +1,47 @@
+# @package _global_
+# Default plotting configuration for Urartu actions
+# Actions can override these settings in their action config under the "plotting" key
+
+plotting:
+  # Directory structure
+  # All plots will be saved to: run_dir/plots_subdirectory/
+  plots_subdirectory: "plots"
+  
+  # File formats
+  # PNG is always saved, PDF is optional
+  save_png: true
+  save_pdf: false  # Set to true in action config to enable PDF export
+  
+  # Style defaults
+  style:
+    # Font settings
+    font_family: "sans-serif"
+    font_sans_serif: ["Helvetica", "Arial", "DejaVu Sans"]
+    
+    # Font sizes
+    fontsize: 11
+    title_fontsize: 14
+    label_fontsize: 13
+    legend_fontsize: 10
+    tick_fontsize: 10
+    
+    # DPI settings
+    figure_dpi: 150
+    save_dpi: 150
+    
+    # Matplotlib style
+    # Will try seaborn-v0_8-whitegrid first, fallback to seaborn-whitegrid, then default
+    matplotlib_style: "seaborn-v0_8-whitegrid"
+    
+    # Grid settings
+    grid_alpha: 0.3
+    grid_linewidth: 0.5
+  
+  # Color palette
+  # Options: red_blue, red_orange, blue_green, viridis, plasma, custom
+  color_palette: "red_blue"
+  
+  # Custom color palette (used when color_palette: "custom")
+  # Provide a list of hex color codes
+  color_palette_custom: []
+

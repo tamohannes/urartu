@@ -49,6 +49,25 @@ CACHE_IGNORE_KEYS = {
     "action_name",  # This is metadata, not part of action logic
     "run_dir",  # Runtime directory, doesn't affect outputs
     "device",  # Device doesn't affect outputs, just where computation happens
+    "iteration_id",  # Iteration identifier is only for organizing outputs, not for cache key
+    # Tracking settings (don't affect computation)
+    "outputs_to_track",  # Only affects what gets tracked, not what gets computed
+    # Aim/logging settings
+    "aim",
+    "use_aim",
+    "aim_run",
+    "aim_repo",
+    # Stage/block metadata (these are framework internals, not action inputs)
+    "_stage_idx",
+    "_block_idx",
+    "_resume_at_stage",
+    "_post_loopable_only",
+    "_submit_array_only",
+    "_is_iteration_task",
+    "_iteration_idx",
+    "_loop_iterations_dir",
+    "_iteration_job_ids",
+    "_loopable_stage",
 }
 
 
@@ -682,6 +701,15 @@ class Action(ABC):
                     logger.debug(f"   Removed keys: {sorted(removed_keys)}")
                 logger.debug(f"   Final config keys: {sorted(filtered_cfg.keys())}")
 
+                # Check if pipeline-specific fields leaked through
+                pipeline_specific_in_filtered = [
+                    k for k in filtered_cfg.keys() if k in ['experiment_name', 'pipeline_name', 'pipeline_id', 'pipeline_config_hash']
+                ]
+                if pipeline_specific_in_filtered:
+                    logger.warning(
+                        f"   ⚠️  CRITICAL: Pipeline-specific fields found in FILTERED config (should be removed!): {pipeline_specific_in_filtered}"
+                    )
+
                 return filtered_cfg
             return {}
         except Exception:
@@ -699,6 +727,15 @@ class Action(ABC):
                 if removed_keys:
                     logger.debug(f"   Removed keys: {sorted(removed_keys)}")
                 logger.debug(f"   Final config keys: {sorted(filtered_cfg.keys())}")
+
+                # Check if pipeline-specific fields leaked through
+                pipeline_specific_in_filtered = [
+                    k for k in filtered_cfg.keys() if k in ['experiment_name', 'pipeline_name', 'pipeline_id', 'pipeline_config_hash']
+                ]
+                if pipeline_specific_in_filtered:
+                    logger.warning(
+                        f"   ⚠️  CRITICAL: Pipeline-specific fields found in FILTERED config (should be removed!): {pipeline_specific_in_filtered}"
+                    )
 
                 return filtered_cfg
             return {}

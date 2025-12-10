@@ -5,14 +5,15 @@ Parses command-line arguments in the format:
   urartu <pipeline_name> [key=value ...] [--key value ...]
 """
 
-import logging
 import os
 import pwd
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-logger = logging.getLogger(__name__)
+from urartu.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 # Get current user for config directory checking
 try:
@@ -310,9 +311,9 @@ Examples:
 if __name__ == "__main__":
     try:
         pipeline_name, overrides = parse_args()
-        print(f"Pipeline: {pipeline_name}")
-        print(f"Overrides: {overrides}")
+        logger.info(f"Pipeline: {pipeline_name}")
+        logger.info(f"Overrides: {overrides}")
     except ValueError as e:
-        print(f"Error: {e}")
+        logger.error(f"Error: {e}")
         print_usage()
         sys.exit(1)

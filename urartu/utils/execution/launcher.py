@@ -1,12 +1,17 @@
 import hashlib
-import logging
+import tempfile
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 from aim import Run
 from iopath.common.file_io import g_pathmgr
+from omegaconf import OmegaConf
+
+from urartu.utils.logging import get_logger
 
 from .job import ResumableJob, ResumableSlurmJob
+
+logger = get_logger(__name__)
 
 # Get the directory where templates are stored
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -39,19 +44,19 @@ def launch_remote(cfg: Dict):
     force_reinstall = machine_cfg.get("force_reinstall", False)
     force_env_export = machine_cfg.get("force_env_export", False)
 
-    logging.info(f"Starting remote execution on {username}@{host}")
+    logger.info(f"Starting remote execution on {username}@{host}")
     if force_reinstall:
-        logging.info("Force reinstall enabled - package will be reinstalled regardless of changes")
+        logger.info("Force reinstall enabled - package will be reinstalled regardless of changes")
     if force_env_export:
-        logging.info("Force environment export enabled - conda environment will be exported and transferred")
+        logger.info("Force environment export enabled - conda environment will be exported and transferred")
 
     # Get current conda environment name
     conda_env = os.environ.get("CONDA_DEFAULT_ENV", None)
     if not conda_env:
-        logging.warning("Not running in a conda environment. Remote execution may fail if dependencies are missing.")
+        logger.warning("Not running in a conda environment. Remote execution may fail if dependencies are missing.")
         conda_env = "base"
     else:
-        logging.info(f"Current conda environment: {conda_env}")
+        logger.info(f"Current conda environment: {conda_env}")
 
     # Find git repository root
     current_dir = Path.cwd()
@@ -59,24 +64,24 @@ def launch_remote(cfg: Dict):
     try:
         git_root_result = subprocess.run(git_root_cmd, capture_output=True, text=True, check=True)
         project_root = Path(git_root_result.stdout.strip())
-        logging.info(f"Detected git repository root: {project_root}")
+        logger.info(f"Detected git repository root: {project_root}")
     except subprocess.CalledProcessError:
-        logging.warning("Could not detect git repository root, using current directory")
+        logger.warning("Could not detect git repository root, using current directory")
         project_root = current_dir
 
     # Calculate relative path from repo root to current directory
     try:
         relative_work_dir = current_dir.relative_to(project_root)
-        logging.info(f"Current working directory relative to repo root: {relative_work_dir}")
+        logger.info(f"Current working directory relative to repo root: {relative_work_dir}")
     except ValueError:
         # current_dir is not relative to project_root
         relative_work_dir = Path(".")
-        logging.warning("Current directory is not inside git repository, will use root")
+        logger.warning("Current directory is not inside git repository, will use root")
 
     remote_project_dir = remote_workdir / project_name
 
     # 1. Transfer the codebase using rsync
-    logging.info(f"Transferring codebase to {host}:{remote_project_dir}")
+    logger.info(f"Transferring codebase to {host}:{remote_project_dir}")
 
     # Use SSH connection multiplexing to reuse connections and speed up multiple SSH commands
     # Create a control master socket for connection reuse
@@ -105,7 +110,7 @@ def launch_remote(cfg: Dict):
     check_result = subprocess.run(ssh_check_dir_cmd, capture_output=True)
 
     if check_result.returncode != 0:
-        logging.info(f"Remote directory {remote_project_dir} doesn't exist. Creating it...")
+        logger.info(f"Remote directory {remote_project_dir} doesn't exist. Creating it...")
         ssh_mkdir_cmd = [
             "ssh",
             "-i",
@@ -121,12 +126,12 @@ def launch_remote(cfg: Dict):
         ]
         mkdir_result = subprocess.run(ssh_mkdir_cmd, capture_output=True, text=True, check=True)
         if mkdir_result.stdout:
-            logging.info(mkdir_result.stdout.strip())
+            logger.info(mkdir_result.stdout.strip())
         if mkdir_result.stderr:
-            logging.warning(mkdir_result.stderr.strip())
-        logging.info(f"Remote directory {remote_project_dir} created successfully.")
+            logger.warning(mkdir_result.stderr.strip())
+        logger.info(f"Remote directory {remote_project_dir} created successfully.")
     else:
-        logging.info(f"Remote directory {remote_project_dir} already exists.")
+        logger.info(f"Remote directory {remote_project_dir} already exists.")
 
     # Use rsync to copy with optimized options for faster transfers
     rsync_cmd = [
@@ -158,10 +163,10 @@ def launch_remote(cfg: Dict):
     # Check if .gitignore exists and add it to exclusions
     gitignore_path = project_root / ".gitignore"
     if gitignore_path.exists():
-        logging.info(f"Found .gitignore, using it to exclude files")
+        logger.info(f"Found .gitignore, using it to exclude files")
         rsync_cmd.append(f"--exclude-from={gitignore_path}")
     else:
-        logging.info("No .gitignore found, syncing all files (except common unwanted files)")
+        logger.info("No .gitignore found, syncing all files (except common unwanted files)")
 
     rsync_cmd.extend(
         [
@@ -177,11 +182,11 @@ def launch_remote(cfg: Dict):
     if rsync_result.stdout:
         for line in rsync_result.stdout.splitlines():
             if line.strip():
-                logging.info(line.strip())
+                logger.info(line.strip())
     if rsync_result.stderr:
         for line in rsync_result.stderr.splitlines():
             if line.strip():
-                logging.warning(line.strip())
+                logger.warning(line.strip())
 
     # Check if any files were actually transferred (rsync output contains file names when transferring)
     files_transferred = False
@@ -193,36 +198,36 @@ def launch_remote(cfg: Dict):
             transferred_files.append(line)
 
     if files_transferred:
-        logging.info(f"Codebase changes detected, transferred {len(transferred_files)} file(s).")
+        logger.info(f"Codebase changes detected, transferred {len(transferred_files)} file(s).")
         if len(transferred_files) <= 10:
             # Show files if not too many
             for f in transferred_files:
-                logging.debug(f"  {f}")
+                logger.debug(f"  {f}")
     else:
-        logging.info("Codebase unchanged, no files transferred.")
+        logger.info("Codebase unchanged, no files transferred.")
 
     # Check if urartu is installed in editable mode and sync it too
-    logging.info("Checking if urartu is installed in editable/development mode...")
+    logger.info("Checking if urartu is installed in editable/development mode...")
     try:
         import urartu
 
         urartu_location = Path(urartu.__file__).parent.parent
-        logging.info(f"Found urartu package at: {urartu_location}")
+        logger.info(f"Found urartu package at: {urartu_location}")
 
         # Check if it's an editable install by looking for .git or setup.py in parent
         is_editable = (urartu_location / ".git").exists() or (urartu_location / "setup.py").exists()
 
         if is_editable and urartu_location != project_root:
-            logging.info("Urartu is installed in editable mode from a different location. Syncing it to remote...")
+            logger.info("Urartu is installed in editable mode from a different location. Syncing it to remote...")
 
             # Create remote urartu directory
             remote_urartu_dir = remote_workdir / "urartu"
             ssh_mkdir_cmd = ["ssh", "-i", ssh_key, f"{username}@{host}", f"mkdir -p {remote_urartu_dir}"]
             mkdir_result = subprocess.run(ssh_mkdir_cmd, capture_output=True, text=True, check=True)
             if mkdir_result.stdout:
-                logging.info(mkdir_result.stdout.strip())
+                logger.info(mkdir_result.stdout.strip())
             if mkdir_result.stderr:
-                logging.warning(mkdir_result.stderr.strip())
+                logger.warning(mkdir_result.stderr.strip())
 
             # Sync urartu source with optimized options
             rsync_urartu_cmd = [
@@ -258,19 +263,19 @@ def launch_remote(cfg: Dict):
             if rsync_urartu_result.stdout:
                 for line in rsync_urartu_result.stdout.splitlines():
                     if line.strip():
-                        logging.info(line.strip())
+                        logger.info(line.strip())
             if rsync_urartu_result.stderr:
                 for line in rsync_urartu_result.stderr.splitlines():
                     if line.strip():
-                        logging.warning(line.strip())
-            logging.info(f"Urartu framework synced to {remote_urartu_dir}")
+                        logger.warning(line.strip())
+            logger.info(f"Urartu framework synced to {remote_urartu_dir}")
             files_transferred = True  # Force reinstall since urartu changed
         elif is_editable:
-            logging.info("Urartu is part of the current project, already synced.")
+            logger.info("Urartu is part of the current project, already synced.")
         else:
-            logging.info("Urartu is installed from pip/conda, no sync needed.")
+            logger.info("Urartu is installed from pip/conda, no sync needed.")
     except Exception as e:
-        logging.warning(f"Could not check urartu installation: {e}. Continuing without urartu sync.")
+        logger.warning(f"Could not check urartu installation: {e}. Continuing without urartu sync.")
 
     # Smart environment export - only export if dependencies changed (hash-based)
     env_file = project_root / f"environment_{conda_env}.yml"
@@ -290,16 +295,16 @@ def launch_remote(cfg: Dict):
             if env_hash_file.exists():
                 last_hash = env_hash_file.read_text().strip()
                 if current_env_hash == last_hash:
-                    logging.info("Environment dependencies unchanged, skipping export.")
+                    logger.info("Environment dependencies unchanged, skipping export.")
                     should_export_env = False
                 else:
-                    logging.info("Environment dependencies changed, will export.")
+                    logger.info("Environment dependencies changed, will export.")
                     should_export_env = True
             else:
-                logging.info("No previous environment hash found, will export.")
+                logger.info("No previous environment hash found, will export.")
                 should_export_env = True
         except Exception as e:
-            logging.warning(f"Could not check environment hash: {e}. Will export to be safe.")
+            logger.warning(f"Could not check environment hash: {e}. Will export to be safe.")
             should_export_env = True
     else:
         should_export_env = True
@@ -307,12 +312,12 @@ def launch_remote(cfg: Dict):
     # Only export if dependencies actually changed (not just because files were transferred)
     # Files in editable mode don't require environment updates
     if should_export_env:
-        logging.info(f"Exporting conda environment '{conda_env}'...")
+        logger.info(f"Exporting conda environment '{conda_env}'...")
         export_cmd = ["conda", "env", "export", "-n", conda_env, "--no-builds"]
         try:
             with open(env_file, "w") as f:
                 subprocess.run(export_cmd, stdout=f, check=True)
-            logging.info(f"Environment exported to {env_file}")
+            logger.info(f"Environment exported to {env_file}")
 
             # Save hash for next time
             if current_env_hash:
@@ -364,20 +369,20 @@ def launch_remote(cfg: Dict):
                 if rsync_env_result.stdout:
                     for line in rsync_env_result.stdout.splitlines():
                         if line.strip():
-                            logging.info(line.strip())
+                            logger.info(line.strip())
                 if rsync_env_result.stderr:
                     for line in rsync_env_result.stderr.splitlines():
                         if line.strip():
-                            logging.warning(line.strip())
+                            logger.warning(line.strip())
                 env_file_transferred = True
-                logging.info("Environment file transferred.")
+                logger.info("Environment file transferred.")
             else:
-                logging.info("Environment file unchanged on remote, skipping transfer.")
+                logger.info("Environment file unchanged on remote, skipping transfer.")
         except subprocess.CalledProcessError as e:
-            logging.warning(f"Failed to export conda environment: {e}. Will try to use existing remote environment.")
+            logger.warning(f"Failed to export conda environment: {e}. Will try to use existing remote environment.")
             env_file_transferred = False
     else:
-        logging.info("Skipping conda environment export (dependencies unchanged).")
+        logger.info("Skipping conda environment export (dependencies unchanged).")
 
     # 2. Check if remote setup is needed by comparing package hashes
     # Calculate hash of installed packages locally and get package list for incremental updates
@@ -389,9 +394,9 @@ def launch_remote(cfg: Dict):
         pip_list_result = subprocess.run(pip_list_cmd, capture_output=True, text=True, check=True)
         local_package_list = pip_list_result.stdout
         local_package_hash = hashlib.md5(local_package_list.encode()).hexdigest()
-        logging.debug(f"Local package hash: {local_package_hash}")
+        logger.debug(f"Local package hash: {local_package_hash}")
     except Exception as e:
-        logging.warning(f"Could not calculate local package hash: {e}. Will run setup script to be safe.")
+        logger.warning(f"Could not calculate local package hash: {e}. Will run setup script to be safe.")
 
     # Check remote package hash
     remote_package_hash_file = f"{remote_project_dir}/.package_hash_{conda_env}.txt"
@@ -413,30 +418,30 @@ def launch_remote(cfg: Dict):
         check_remote_hash_result = subprocess.run(check_remote_hash_cmd, capture_output=True, text=True)
         if check_remote_hash_result.returncode == 0:
             remote_package_hash = check_remote_hash_result.stdout.strip()
-            logging.debug(f"Remote package hash: {remote_package_hash}")
+            logger.debug(f"Remote package hash: {remote_package_hash}")
 
     # Skip setup if packages haven't changed
     # Even if files were transferred, we don't need to reinstall packages if they're in editable mode
     skip_setup = False
     if local_package_hash and remote_package_hash and local_package_hash == remote_package_hash:
         if not force_reinstall:
-            logging.info(
+            logger.info(
                 "Package lists match between local and remote. Skipping remote setup script (editable installs will reflect code changes automatically)."
             )
             skip_setup = True
         else:
-            logging.info("Package lists match, but force_reinstall is set. Will run setup script.")
+            logger.info("Package lists match, but force_reinstall is set. Will run setup script.")
     else:
         if local_package_hash and remote_package_hash:
-            logging.info("Package lists differ. Will run setup script to update packages.")
+            logger.info("Package lists differ. Will run setup script to update packages.")
         else:
-            logging.info("No package hash available. Will run setup script.")
+            logger.info("No package hash available. Will run setup script.")
 
     # 3. Setup remote environment (only if needed)
     # Initialize conda_init_path to None in case we skip setup
     conda_init_path = None
     if skip_setup:
-        logging.info("Skipping remote environment setup (packages unchanged).")
+        logger.info("Skipping remote environment setup (packages unchanged).")
         # Still need to ensure conda path is cached for future use
         # But we can skip the expensive setup script execution
         # Try to get conda_init_path from cache if available
@@ -464,7 +469,7 @@ def launch_remote(cfg: Dict):
                 conda_base = "/".join(parts[:-2])
             conda_init_path = f"{conda_base}/etc/profile.d/conda.sh"
     else:
-        logging.info("Setting up remote environment...")
+        logger.info("Setting up remote environment...")
 
         # Cache conda path on remote to avoid re-detection every time
         conda_cache_file = f"{remote_project_dir}/.conda_path_cache"
@@ -501,22 +506,22 @@ def launch_remote(cfg: Dict):
             ]
             verify_result = subprocess.run(verify_cmd, capture_output=True, text=True)
             if verify_result.stdout.strip() == "OK":
-                logging.info(f"Using cached conda path: {conda_path}")
+                logger.info(f"Using cached conda path: {conda_path}")
                 parts = conda_path.split("/")
                 if "condabin" in parts:
                     conda_base = "/".join(parts[:-2])
                 else:
                     conda_base = "/".join(parts[:-2])
                 conda_init_path = f"{conda_base}/etc/profile.d/conda.sh"
-                logging.info(f"Conda base directory: {conda_base}")
-                logging.info(f"Using conda initialization script: {conda_init_path}")
+                logger.info(f"Conda base directory: {conda_base}")
+                logger.info(f"Using conda initialization script: {conda_init_path}")
             else:
-                logging.info("Cached conda path invalid, re-detecting...")
+                logger.info("Cached conda path invalid, re-detecting...")
                 conda_path = None
 
         if not conda_path or conda_path == "CONDA_NOT_FOUND":
             # First, detect conda location on remote
-            logging.info("Detecting conda on remote machine...")
+            logger.info("Detecting conda on remote machine...")
 
             # Load conda detection script from template
             detect_conda_script = _load_template("detect_conda.sh")
@@ -534,12 +539,12 @@ def launch_remote(cfg: Dict):
                 f"{username}@{host}",
                 f"bash -l -c '{detect_conda_script}'",
             ]
-            logging.info("Detecting conda on remote machine (this may take a moment)...")
+            logger.info("Detecting conda on remote machine (this may take a moment)...")
             conda_detect_result = subprocess.run(detect_conda_cmd, capture_output=True, text=True)
             conda_path = conda_detect_result.stdout.strip()
 
             if conda_path and conda_path != "CONDA_NOT_FOUND" and len(conda_path) > 0:
-                logging.info(f"Found conda at: {conda_path}")
+                logger.info(f"Found conda at: {conda_path}")
                 # Cache the path for next time
                 cache_write_cmd = [
                     "ssh",
@@ -565,10 +570,10 @@ def launch_remote(cfg: Dict):
                     # Remove bin/conda
                     conda_base = "/".join(parts[:-2])
                 conda_init_path = f"{conda_base}/etc/profile.d/conda.sh"
-                logging.info(f"Conda base directory: {conda_base}")
-                logging.info(f"Using conda initialization script: {conda_init_path}")
+                logger.info(f"Conda base directory: {conda_base}")
+                logger.info(f"Using conda initialization script: {conda_init_path}")
             else:
-                logging.warning("Could not detect conda on remote machine. Will try common locations and module system.")
+                logger.warning("Could not detect conda on remote machine. Will try common locations and module system.")
                 conda_init_path = "DETECT_IN_SCRIPT"
         # Note: if conda_path was already cached and verified, conda_init_path was set above
 
@@ -600,10 +605,10 @@ def launch_remote(cfg: Dict):
             if check_conda_init_result.returncode == 0:
                 remote_hash = check_conda_init_result.stdout.strip()
                 if remote_hash == conda_init_hash:
-                    logging.debug("Cached conda init script is up to date, will reuse it.")
+                    logger.debug("Cached conda init script is up to date, will reuse it.")
                     need_conda_init_script = False
                 else:
-                    logging.debug("Conda init path changed, will recreate cached script.")
+                    logger.debug("Conda init path changed, will recreate cached script.")
 
         if need_conda_init_script:
             if conda_init_path == "DETECT_IN_SCRIPT":
@@ -614,7 +619,7 @@ def launch_remote(cfg: Dict):
                 conda_init_script_content = _load_template("conda_init_simple.sh").format(CONDA_INIT_PATH=conda_init_path)
 
             # Write the conda init script to a temporary file
-            conda_init_script_local = Path("/tmp") / f"conda_init_{project_name}.sh"
+            conda_init_script_local = Path(tempfile.gettempdir()) / f"conda_init_{project_name}.sh"
             with open(conda_init_script_local, "w") as f:
                 f.write(conda_init_script_content)
 
@@ -663,7 +668,7 @@ def launch_remote(cfg: Dict):
             ]
             subprocess.run(hash_write_cmd, capture_output=True, text=True)
 
-            logging.debug(f"Created cached conda init script at {conda_init_script_remote}")
+            logger.debug(f"Created cached conda init script at {conda_init_script_remote}")
 
         # Create a setup script
         # Use the cached conda init script instead of re-detecting every time
@@ -680,11 +685,12 @@ fi"""
 
         # Pass files_transferred as environment variable
         files_transferred_str = "true" if files_transferred else "false"
-        
+
         # Prepare local package list for incremental updates (base64 encode to avoid issues with special chars)
         local_package_list_encoded = ""
         if local_package_list:
             import base64
+
             local_package_list_encoded = base64.b64encode(local_package_list.encode()).decode()
 
         # Load setup script template and format it
@@ -699,7 +705,7 @@ fi"""
         )
 
         # Write setup script locally
-        setup_script_path = Path("/tmp") / f"setup_remote_{project_name}.sh"
+        setup_script_path = Path(tempfile.gettempdir()) / f"setup_remote_{project_name}.sh"
         with open(setup_script_path, "w") as f:
             f.write(setup_script)
 
@@ -719,11 +725,11 @@ fi"""
         if rsync_setup_result.stdout:
             for line in rsync_setup_result.stdout.splitlines():
                 if line.strip():
-                    logging.info(line.strip())
+                    logger.info(line.strip())
         if rsync_setup_result.stderr:
             for line in rsync_setup_result.stderr.splitlines():
                 if line.strip():
-                    logging.warning(line.strip())
+                    logger.warning(line.strip())
 
     # Execute setup script on remote (only if not skipped)
     if not skip_setup:
@@ -741,23 +747,23 @@ fi"""
             f"{username}@{host}",
             f"bash {remote_project_dir}/setup_env.sh",
         ]
-        logging.info("Executing remote setup script (this may take a moment for conda initialization)...")
+        logger.info("Executing remote setup script (this may take a moment for conda initialization)...")
         setup_result = subprocess.run(ssh_setup_cmd, capture_output=True, text=True)
 
         # Log setup script output line by line
         if setup_result.stdout:
             for line in setup_result.stdout.splitlines():
                 if line.strip():
-                    logging.info(line.strip())
+                    logger.info(line.strip())
         if setup_result.stderr:
             for line in setup_result.stderr.splitlines():
                 if line.strip():
-                    logging.warning(line.strip())
+                    logger.warning(line.strip())
 
         if setup_result.returncode != 0:
-            logging.error("Failed to set up remote environment. Continuing anyway...")
+            logger.error("Failed to set up remote environment. Continuing anyway...")
         else:
-            logging.info("Remote environment setup completed successfully.")
+            logger.info("Remote environment setup completed successfully.")
 
             # Update remote package hash after successful setup
             if local_package_hash:
@@ -775,14 +781,14 @@ fi"""
                     f"echo '{local_package_hash}' > {remote_package_hash_file}",
                 ]
                 subprocess.run(update_hash_cmd, capture_output=True, text=True)
-                logging.debug(f"Updated remote package hash: {local_package_hash}")
+                logger.debug(f"Updated remote package hash: {local_package_hash}")
     else:
-        logging.info("Remote environment setup skipped (packages unchanged).")
+        logger.info("Remote environment setup skipped (packages unchanged).")
 
     # 3. Remote execution
 
     # 3. Remote execution
-    logging.info("Executing command on the remote machine.")
+    logger.info("Executing command on the remote machine.")
 
     # Construct remote command
     original_args = sys.argv[1:]
@@ -808,7 +814,7 @@ fi"""
 
     # Override machine to local for remote execution (remote machine runs locally)
     remote_args.append("machine=local")
-    logging.debug(f"Remote command args (excluding machine=): {[a for a in remote_args if not a.startswith('machine=')]}")
+    logger.debug(f"Remote command args (excluding machine=): {[a for a in remote_args if not a.startswith('machine=')]}")
 
     # Calculate the full remote working directory (repo root + relative path)
     remote_work_dir = remote_project_dir / relative_work_dir
@@ -832,7 +838,7 @@ fi"""
                 remote_run_dir = remote_project_dir / rel_path
             except ValueError:
                 # Can't convert, use as-is but warn
-                logging.warning(f"Could not convert absolute run_dir {local_run_dir} to remote path, using as-is")
+                logger.warning(f"Could not convert absolute run_dir {local_run_dir} to remote path, using as-is")
                 remote_run_dir = local_run_dir_path
         else:
             # Already relative, use as-is
@@ -841,14 +847,14 @@ fi"""
         # Convert Path to string for the command
         remote_run_dir_str = str(remote_run_dir)
         remote_args.append(f'run_dir={remote_run_dir_str}')
-        logging.info(f"Using same run_dir as local (converted to remote path): {remote_run_dir_str}")
+        logger.info(f"Using same run_dir as local (converted to remote path): {remote_run_dir_str}")
     elif custom_run_dir:
         # User provided a custom run_dir
         # Check if it already contains Hydra variables
         if '${action_name}' in custom_run_dir or '${now:' in custom_run_dir:
             # Already has variables, use as-is
             remote_args.append(f'run_dir={custom_run_dir}')
-            logging.info(f"Using user-provided run_dir with Hydra variables: {custom_run_dir}")
+            logger.info(f"Using user-provided run_dir with Hydra variables: {custom_run_dir}")
         else:
             # No variables, append the standard structure
             if custom_run_dir.endswith('/'):
@@ -857,12 +863,12 @@ fi"""
                 base_path = custom_run_dir
             full_run_dir = f'{base_path}/\${{action_name}}/\${{now:%Y-%m-%d}}_\${{now:%H-%M-%S}}'
             remote_args.append(f'run_dir={full_run_dir}')
-            logging.info(f"Appending action_name/timestamp structure to custom run_dir: {base_path}/...")
+            logger.info(f"Appending action_name/timestamp structure to custom run_dir: {base_path}/...")
     else:
         # No custom run_dir, use default location
         remote_runs_path = f"{remote_work_dir}/.runs"
         remote_args.append(f'run_dir={remote_runs_path}/\${{action_name}}/\${{now:%Y-%m-%d}}_\${{now:%H-%M-%S}}')
-        logging.info(f"Setting run_dir to default absolute path: {remote_runs_path}/...")
+        logger.info(f"Setting run_dir to default absolute path: {remote_runs_path}/...")
 
     # Build command that activates conda environment and runs urartu
     # Properly quote arguments that contain spaces or special characters
@@ -882,7 +888,7 @@ fi"""
             quoted_args.append(shlex.quote(arg))
     urartu_command = " ".join(["urartu"] + quoted_args)
 
-    logging.info(f"Remote command will include: {[a for a in remote_args if 'slurm' in a.lower() or 'aim' in a.lower() or 'machine' in a.lower()]}")
+    logger.info(f"Remote command will include: {[a for a in remote_args if 'slurm' in a.lower() or 'aim' in a.lower() or 'machine' in a.lower()]}")
 
     # Use the cached conda init script for remote execution (always prefer this)
     conda_init_script_remote = f"{remote_project_dir}/.conda_init.sh"
@@ -900,39 +906,39 @@ cd {remote_work_dir}
 {urartu_command}
 '"""
 
-    logging.info(f"Executing remote command in environment '{conda_env}'")
-    logging.info(f"Working directory: {remote_work_dir}")
-    logging.info(f"Command: {urartu_command}")
+    logger.info(f"Executing remote command in environment '{conda_env}'")
+    logger.info(f"Working directory: {remote_work_dir}")
+    logger.info(f"Command: {urartu_command}")
 
     # Execute and stream output in real-time
     ssh_exec_cmd = ["ssh", "-i", ssh_key, "-t", f"{username}@{host}", remote_command]
 
-    logging.info("=" * 80)
-    logging.info("REMOTE EXECUTION OUTPUT:")
-    logging.info("=" * 80)
+    logger.info("=" * 80)
+    logger.info("REMOTE EXECUTION OUTPUT:")
+    logger.info("=" * 80)
 
     result = subprocess.run(ssh_exec_cmd)
 
-    logging.info("=" * 80)
+    logger.info("=" * 80)
 
     if result.returncode == 0:
-        logging.info("Remote execution completed successfully.")
+        logger.info("Remote execution completed successfully.")
     else:
-        logging.error(f"Remote execution failed with exit code {result.returncode}")
+        logger.error(f"Remote execution failed with exit code {result.returncode}")
 
     # Cleanup temporary files
     if env_file_transferred:
         try:
             if env_file.exists():
                 env_file.unlink()
-                logging.debug(f"Cleaned up temporary environment file: {env_file}")
+                logger.debug(f"Cleaned up temporary environment file: {env_file}")
         except Exception as e:
-            logging.debug(f"Could not clean up temporary files: {e}")
+            logger.debug(f"Could not clean up temporary files: {e}")
 
     return result.returncode
 
 
-def create_submitit_executor(cfg: Dict):
+def create_submitit_executor(cfg: Dict, array_size: Optional[int] = None, dependency: Optional[str] = None):
     """
     Creates and configures a SubmitIt executor based on the provided configuration.
     Ensures the log directory exists and is accessible.
@@ -940,6 +946,8 @@ def create_submitit_executor(cfg: Dict):
     Args:
         cfg (Dict): A dictionary containing configuration settings for the executor,
                     including directory paths and Slurm specific options.
+        array_size (Optional[int]): Number of array tasks (creates job array if provided).
+        dependency (Optional[str]): SLURM job dependency string (e.g., "afterok:12345").
 
     Returns:
         submitit.AutoExecutor: A configured executor ready to handle job submissions.
@@ -950,38 +958,176 @@ def create_submitit_executor(cfg: Dict):
     """
     import submitit
 
-    log_folder = Path(cfg["run_dir"])
+    # Use log_folder from slurm config if specified, otherwise use run_dir
+    # This allows iteration jobs to store submission files in task-specific directories
+    if "slurm" in cfg and "log_folder" in cfg["slurm"]:
+        log_folder = Path(cfg["slurm"]["log_folder"])
+    else:
+        log_folder = Path(cfg["run_dir"])
+
     try:
         if not g_pathmgr.exists(log_folder):
             g_pathmgr.mkdirs(log_folder)
     except BaseException:
-        logging.error(f"Error creating directory: {log_folder}")
+        logger.error(f"Error creating directory: {log_folder}")
 
-    assert g_pathmgr.exists(log_folder), f"Specified cfg['slurm']['log_folder']={log_folder} doesn't exist"
+    assert g_pathmgr.exists(log_folder), f"Specified log_folder={log_folder} doesn't exist"
     assert cfg["slurm"]["partition"], "slurm.PARTITION must be set when using slurm"
 
+    # Note: We cannot use %a in the folder path when creating the executor because
+    # SubmitIt only allows %a in paths when it's actually creating an array job.
+    # The folder is set when creating the executor, before the array is created.
+    # Result files will be saved in the default location (log_folder) with names like
+    # %j_%t_result.pkl where %j is the array job ID (e.g., "318156_0") and %t is the task ID.
+    # We organize logs into subdirectories via the output/error parameters instead.
     executor = submitit.AutoExecutor(folder=log_folder)
 
-    # Update parameters to align with _make_sbatch_string
-    executor.update_parameters(
-        name=cfg["slurm"]["name"],
-        slurm_comment=cfg["slurm"]["comment"],
-        slurm_account=cfg["slurm"]["account"],
-        slurm_partition=cfg["slurm"]["partition"],
-        timeout_min=cfg["slurm"]["timeout_min"],
-        slurm_constraint=cfg["slurm"]["constraint"],
-        slurm_mem=f"{cfg['slurm']['mem']}G",
-        slurm_nodelist=cfg["slurm"]["nodelist"],
-        nodes=cfg["slurm"]["nodes"],
-        tasks_per_node=cfg["slurm"]["tasks_per_node"],
-        gpus_per_node=cfg["slurm"]["gpus_per_node"],
-        cpus_per_task=cfg["slurm"]["cpus_per_task"],
-        slurm_additional_parameters=cfg["slurm"]["additional_parameters"],
-    )
+    # Prepare parameters
+    # Handle additional_parameters (may be None or dict)
+    additional_params = cfg["slurm"].get("additional_parameters", {}) or {}
+    if not isinstance(additional_params, dict):
+        additional_params = {}
+
+    # For job arrays, use array-specific resources if configured, otherwise use defaults
+    # This allows array tasks to request fewer resources (e.g., 1 GPU instead of 4)
+    if array_size is not None and array_size > 0:
+        # Check for array-specific resource configuration
+        array_mem = cfg["slurm"].get("array_mem", cfg["slurm"]["mem"])
+        array_gpus_per_node = cfg["slurm"].get("array_gpus_per_node", cfg["slurm"]["gpus_per_node"])
+        array_cpus_per_task = cfg["slurm"].get("array_cpus_per_task", cfg["slurm"]["cpus_per_task"])
+        array_nodes = cfg["slurm"].get("array_nodes", cfg["slurm"]["nodes"])
+        # For arrays, typically don't use nodelist (let SLURM assign nodes)
+        array_nodelist = cfg["slurm"].get("array_nodelist", None)
+
+        # For the initial submission job (that submits the array), use minimal resources
+        # This job just submits other jobs, so it doesn't need GPUs or much memory
+        submission_mem = cfg["slurm"].get("submission_mem", 8)
+        submission_gpus_per_node = cfg["slurm"].get("submission_gpus_per_node", 0)
+        submission_cpus_per_task = cfg["slurm"].get("submission_cpus_per_task", 1)
+        submission_nodelist = cfg["slurm"].get("submission_nodelist", None)
+
+        # Use submission resources for the executor (the job that submits the array)
+        # The array tasks themselves will use array_* resources when they run
+        executor_mem = submission_mem
+        executor_gpus_per_node = submission_gpus_per_node
+        executor_cpus_per_task = submission_cpus_per_task
+        executor_nodelist = submission_nodelist
+        executor_nodes = cfg["slurm"].get("submission_nodes", 1)
+    else:
+        array_mem = cfg["slurm"]["mem"]
+        array_gpus_per_node = cfg["slurm"]["gpus_per_node"]
+        array_cpus_per_task = cfg["slurm"]["cpus_per_task"]
+        array_nodes = cfg["slurm"]["nodes"]
+        array_nodelist = cfg["slurm"]["nodelist"]
+        executor_mem = cfg["slurm"]["mem"]
+        executor_gpus_per_node = cfg["slurm"]["gpus_per_node"]
+        executor_cpus_per_task = cfg["slurm"]["cpus_per_task"]
+        executor_nodes = cfg["slurm"]["nodes"]
+        executor_nodelist = cfg["slurm"]["nodelist"]
+
+    executor_params = {
+        "name": cfg["slurm"]["name"],
+        "slurm_comment": cfg["slurm"]["comment"],
+        "slurm_account": cfg["slurm"]["account"],
+        "slurm_partition": cfg["slurm"]["partition"],
+        "timeout_min": cfg["slurm"]["timeout_min"],
+        "slurm_constraint": cfg["slurm"]["constraint"],
+        "slurm_mem": f"{executor_mem}G",
+        "slurm_nodelist": executor_nodelist,
+        "nodes": executor_nodes,
+        "tasks_per_node": cfg["slurm"]["tasks_per_node"],
+        "gpus_per_node": executor_gpus_per_node,
+        "cpus_per_task": executor_cpus_per_task,
+        "slurm_srun_args": [],  # Initialize slurm_srun_args list
+    }
+
+    # Store array-specific resources in the config so array tasks can use them
+    # This will be passed to each array task's config
+    if array_size is not None and array_size > 0:
+        cfg["slurm"]["_array_mem"] = array_mem
+        cfg["slurm"]["_array_gpus_per_node"] = array_gpus_per_node
+        cfg["slurm"]["_array_cpus_per_task"] = array_cpus_per_task
+        cfg["slurm"]["_array_nodes"] = array_nodes
+        cfg["slurm"]["_array_nodelist"] = array_nodelist
+
+    # Copy additional_params to avoid modifying the original
+    final_additional_params = additional_params.copy()
+
+    # Remove any existing output/error paths to avoid conflicts
+    # We'll set our own custom paths below
+    if "output" in final_additional_params:
+        del final_additional_params["output"]
+    if "error" in final_additional_params:
+        del final_additional_params["error"]
+
+    # Add array support if specified
+    if array_size is not None and array_size > 0:
+        # SubmitIt uses array_parallelism to limit concurrent array tasks
+        array_parallelism = cfg["slurm"].get("array_parallelism", min(array_size, 256))
+        executor_params["array_parallelism"] = array_parallelism
+        # Add array to additional_parameters for SLURM
+        final_additional_params["array"] = f"0-{array_size - 1}%{array_parallelism}"
+
+        # For array jobs, organize logs into subdirectories: array_tasks/array_%A/task_%a/
+        # %A is array job ID, %a is array task ID
+        # Note: %A and %a are SLURM placeholders that are expanded by SLURM at runtime
+        # %A = array job ID (e.g., 318206)
+        # %a = array task ID (e.g., 0, 1, 2, ...)
+        # Organizing by array job ID first prevents logs from different array submissions from mixing
+        log_folder_str = str(log_folder)
+        array_output_path = f"{log_folder_str}/array_tasks/array_%A/task_%a/%A_%a_log.out"
+        array_error_path = f"{log_folder_str}/array_tasks/array_%A/task_%a/%A_%a_log.err"
+        final_additional_params["output"] = array_output_path
+        final_additional_params["error"] = array_error_path
+
+        # Note: We don't override slurm_srun_args here because:
+        # 1. SBATCH directives (output/error) are already set above
+        # 2. srun inherits output/error from SBATCH by default
+        # 3. Overriding in slurm_srun_args can cause conflicts and may not expand %A/%a correctly
+
+        # Note: We don't pre-create subdirectories here because:
+        # 1. The path includes %A (array job ID) which is only known at submission time
+        # 2. SLURM will create the directories automatically when the array tasks run
+        # 3. Pre-creating with a specific array job ID would be incorrect since we don't know it yet
+
+    # Add dependency if specified
+    if dependency:
+        final_additional_params["dependency"] = dependency
+
+    # Customize log file naming to remove "_0" suffix for non-array jobs
+    # For non-array jobs, use %j_log.out instead of %j_%t_log.out (which defaults to %j_0_log.out)
+    # IMPORTANT: Always set output/error explicitly to override SubmitIt's defaults
+    # Note: SubmitIt sets default paths first, then additional_parameters overwrites them
+    # CRITICAL: SubmitIt also passes --output and --error to srun, which override SBATCH directives
+    # We need to ensure srun also uses our custom paths via slurm_srun_args
+    if array_size is None or array_size == 0:
+        # Non-array job: use %j_log.out (no task ID, no _0 suffix)
+        # Use absolute path to ensure consistency
+        log_folder_str = str(log_folder.absolute())
+        final_additional_params["output"] = f"{log_folder_str}/%j_log.out"
+        final_additional_params["error"] = f"{log_folder_str}/%j_log.err"
+        # Also set open-mode to append to match SubmitIt's default behavior
+        if "open-mode" not in final_additional_params:
+            final_additional_params["open-mode"] = "append"
+
+        # CRITICAL: Override srun's --output and --error flags to use our custom paths
+        # SubmitIt passes these to srun, which override the SBATCH directives
+        # We need to set these in slurm_srun_args to ensure srun uses our custom paths
+        if "slurm_srun_args" not in executor_params:
+            executor_params["slurm_srun_args"] = []
+        # Remove any existing --output or --error from srun_args
+        executor_params["slurm_srun_args"] = [
+            arg for arg in executor_params["slurm_srun_args"] if not arg.startswith("--output") and not arg.startswith("--error")
+        ]
+        # Add our custom paths to srun_args
+        executor_params["slurm_srun_args"].extend(["--output", f"{log_folder_str}/%j_log.out", "--error", f"{log_folder_str}/%j_log.err"])
+
+    executor_params["slurm_additional_parameters"] = final_additional_params
+    executor.update_parameters(**executor_params)
     return executor
 
 
-def launch_on_slurm(module: str, action_name: str, cfg: Dict, aim_run: Run):
+def launch_on_slurm(module: str, action_name: str, cfg: Dict, aim_run: Run, array_size: Optional[int] = None, dependency: Optional[str] = None):
     """
     Submits a job to a Slurm cluster using the provided module, action, configuration, and Aim run.
     Utilizes a SubmitIt executor for job management.
@@ -991,16 +1137,51 @@ def launch_on_slurm(module: str, action_name: str, cfg: Dict, aim_run: Run):
         action_name (str): The function or method to execute within the module.
         cfg (Dict): Configuration dictionary for the Slurm environment and the job specifics.
         aim_run (Run): An Aim toolkit Run object to track the job.
+        array_size (Optional[int]): Number of array tasks (creates job array if provided).
+        dependency (Optional[str]): SLURM job dependency string (e.g., "afterok:12345").
 
     Returns:
         submitit.Job: The submitted job object containing job management details and status.
     """
-    executor = create_submitit_executor(cfg)
-    trainer = ResumableSlurmJob(module=module, action_name=action_name, cfg=cfg, aim_run=aim_run)
+    executor = create_submitit_executor(cfg, array_size=array_size, dependency=dependency)
 
-    job = executor.submit(trainer)
-    logging.info(f"Submitted job {job.job_id}")
+    if array_size is not None and array_size > 0:
+        # Use batch context to submit multiple jobs as an array
+        # SubmitIt will automatically create a job array when multiple jobs are submitted in batch
+        from omegaconf import OmegaConf
 
+        trainers = []
+        for i in range(array_size):
+            iteration_cfg = OmegaConf.create(cfg)
+            iteration_cfg['_is_array_task'] = True
+            iteration_cfg['_array_task_id'] = str(i)
+            # CRITICAL: Remove _submit_array_only flag from array task configs
+            # Array tasks should NOT submit more arrays - they should run the single iteration
+            if '_submit_array_only' in iteration_cfg:
+                del iteration_cfg['_submit_array_only']
+            trainer = ResumableSlurmJob(module=module, action_name=action_name, cfg=iteration_cfg, aim_run=aim_run)
+            trainers.append(trainer)
+
+        # Submit as array using batch context (SubmitIt will auto-detect and create array)
+        with executor.batch():
+            array_jobs = [executor.submit(trainer) for trainer in trainers]
+
+        # After submission, set up a mechanism to move result files to task subdirectories
+        # Result files will be saved as <job_id>_<task_id>_result.pkl in the executor folder
+        # We want them in array_tasks/task_<array_task_id>/<job_id>_result.pkl
+        # Note: This will be handled by a post-processing step or by modifying SubmitIt's behavior
+        # For now, result files will be in the main directory, but we can add a cleanup step
+
+        logger.info(f"Submitted job array with {len(array_jobs)} tasks" + (f" (dependency: {dependency})" if dependency else ""))
+        logger.info(
+            f"Note: Result .pkl files will be in the main log directory. Consider adding a post-processing step to organize them into array_tasks/task_X/ subdirectories."
+        )
+        return array_jobs
+    else:
+        # Regular single job submission
+        trainer = ResumableSlurmJob(module=module, action_name=action_name, cfg=cfg, aim_run=aim_run)
+        job = executor.submit(trainer)
+        logger.info(f"Submitted job {job.job_id}" + (f" (dependency: {dependency})" if dependency else ""))
     return job
 
 

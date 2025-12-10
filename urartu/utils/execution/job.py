@@ -65,6 +65,7 @@ class ResumableSlurmJob:
         configure_logging(debug=debug_mode)
 
         import submitit
+        import os
 
         environment = submitit.JobEnvironment()
         master_ip = environment.hostnames[0]
@@ -72,12 +73,24 @@ class ResumableSlurmJob:
         self.cfg.slurm.init_method = "tcp"
         self.cfg.slurm.run_id = f"{master_ip}:{master_port}"
 
+        # Check if this is an array task
+        array_task_id = os.environ.get('SLURM_ARRAY_TASK_ID')
+        array_job_id = os.environ.get('SLURM_ARRAY_JOB_ID')
+        if array_task_id:
+            self.cfg['_is_array_task'] = True
+            self.cfg['_array_task_id'] = array_task_id
+            if array_job_id:
+                self.cfg['_array_job_id'] = array_job_id
+            logging.info(f"Detected SLURM array task: task_id={array_task_id}, job_id={array_job_id}")
+
         if self.cfg.aim.use_aim:
             self.get_aim_run()
-            self.aim_run.set(
-                "job",
-                {"job_id": int(environment.job_id), "hostname": environment.hostname},
-            )
+            job_info = {"job_id": int(environment.job_id), "hostname": environment.hostname}
+            if array_task_id:
+                job_info["array_task_id"] = array_task_id
+            if array_job_id:
+                job_info["array_job_id"] = array_job_id
+            self.aim_run.set("job", job_info)
 
         # Only pipelines are supported now
         from pathlib import Path

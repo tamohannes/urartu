@@ -144,7 +144,7 @@ class ModelForCausalLM(Model):
             # Each tensor is of shape (batch_size, vocab_size).
             # We stack them to get a tensor of shape (num_generated_tokens, batch_size, vocab_size).
             scores_stacked = torch.stack(output_tokenized.scores, dim=0)
-            
+
             # We want to return a list of score tensors, one for each sample in the batch.
             # So we transpose to (batch_size, num_generated_tokens, vocab_size) and split.
             scores_per_sample = list(scores_stacked.transpose(0, 1))

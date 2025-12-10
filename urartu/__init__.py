@@ -201,6 +201,311 @@ def main():
     _execute_pipeline(cfg, cwd)
 
 
+def _submit_array_only(cfg: DictConfig, cwd: Path, pipeline_name: str, aim_run):
+    """
+    Submit array jobs for loopable actions and exit immediately (no pipeline execution).
+
+    This function:
+    1. Initializes the pipeline to get loop_iterations
+    2. Checks caching for each iteration
+    3. Only submits array tasks for uncached iterations (or if force_rerun is set)
+    4. Submits dependency job for post-loopable actions
+    5. Exits immediately without running the pipeline
+
+    Args:
+        cfg: Configuration dictionary
+        cwd: Current working directory
+        pipeline_name: Name of the pipeline
+        aim_run: Aim run object
+    """
+    logging.info("🚀 Submission-only job: Initializing pipeline to get loop iterations...")
+
+    # Load and instantiate pipeline
+    sys.path.append(str(cwd / "pipelines"))
+    pipeline_module = __import__(pipeline_name, fromlist=[pipeline_name])
+    pipeline_class = getattr(pipeline_module, pipeline_name.replace('_', ' ').title().replace(' ', ''), None)
+    if not pipeline_class:
+        # Try to find any class that looks like a pipeline
+        for attr_name in dir(pipeline_module):
+            attr = getattr(pipeline_module, attr_name)
+            if isinstance(attr, type) and hasattr(attr, 'main'):
+                pipeline_class = attr
+                break
+
+    if not pipeline_class:
+        raise ValueError(f"Could not find pipeline class in {pipeline_name}")
+
+    pipeline = pipeline_class(cfg, aim_run)
+
+    # Initialize pipeline to get loop_iterations
+    if not pipeline._initialized:
+        pipeline.initialize()
+
+    # Check if pipeline has loopable actions
+    if not hasattr(pipeline, 'loopable_actions') or len(pipeline.loopable_actions) == 0:
+        raise ValueError("Pipeline has no loopable actions, but _submit_array_only was called")
+
+    if not hasattr(pipeline, 'loop_iterations') or len(pipeline.loop_iterations) == 0:
+        raise ValueError("Pipeline has no loop iterations, but _submit_array_only was called")
+
+    logging.info(f"📋 Found {len(pipeline.loop_iterations)} loop iterations")
+
+    # Check caching for each iteration and only submit uncached ones
+    uncached_iterations = []
+    cached_iterations = []
+
+    for iteration_idx, loop_context in enumerate(pipeline.loop_iterations):
+        # Check if this iteration is cached
+        is_cached = pipeline._check_iteration_cache(iteration_idx, loop_context)
+        if is_cached:
+            cached_iterations.append(iteration_idx)
+            logging.info(f"✅ Iteration {iteration_idx} is cached, skipping submission")
+        else:
+            uncached_iterations.append(iteration_idx)
+            logging.info(f"❌ Iteration {iteration_idx} is not cached, will submit")
+
+    if len(cached_iterations) > 0:
+        logging.info(f"📊 {len(cached_iterations)}/{len(pipeline.loop_iterations)} iterations are cached")
+
+    if len(uncached_iterations) == 0:
+        logging.info("✅ All iterations are cached! No jobs to submit.")
+        # Still need to submit dependency job if there are post-loopable actions
+        loopable_idx = next((idx for idx, a in enumerate(pipeline.actions) if a.name == "__loopable_actions__"), None)
+        has_post_loopable = loopable_idx is not None and loopable_idx < len(pipeline.actions) - 1
+        if has_post_loopable:
+            logging.info("📋 Submitting dependency job for post-loopable actions (all iterations cached)")
+            # All iterations are cached, so no jobs to wait for
+            loop_iterations_dir = Path(cfg.get('run_dir', '.')) / "loop_iterations"
+            dep_cfg = OmegaConf.create(cfg)
+            dep_cfg['_post_loopable_only'] = True
+            dep_cfg['_loop_iterations_dir'] = str(loop_iterations_dir)
+            dep_cfg['_iteration_job_ids'] = []  # No jobs - all cached
+
+            from urartu.utils.execution.launcher import launch_on_slurm
+
+            dep_job = launch_on_slurm(
+                module=str(cwd),
+                action_name=pipeline_name,
+                cfg=dep_cfg,
+                aim_run=aim_run,
+                array_size=None,
+                dependency=None,  # No dependencies - all cached
+            )
+            logging.info(f"✅ Submitted dependency job {dep_job.job_id} for post-loopable actions (all iterations cached)")
+        return
+
+    # Create iteration config files for all iterations
+    loop_iterations_dir = pipeline._create_iteration_configs()
+
+    # Submit individual jobs for each uncached iteration (NO ARRAYS - simpler and more reliable)
+    from urartu.utils.execution.launcher import launch_on_slurm
+
+    logging.info(f"🚀 Submitting {len(uncached_iterations)} individual jobs (one per uncached iteration)")
+
+    # Submit one job per uncached iteration
+    iteration_job_ids = []
+    for task_idx, iteration_idx in enumerate(uncached_iterations):
+        # Create config for this specific iteration
+        iteration_cfg = OmegaConf.create(cfg)
+        iteration_cfg['_loop_iterations_dir'] = str(loop_iterations_dir)
+        iteration_cfg['_is_iteration_task'] = True  # Mark as iteration task
+        iteration_cfg['_iteration_idx'] = iteration_idx  # Store iteration index
+
+        # CRITICAL: Remove _submit_array_only flag - this job should run the iteration
+        if '_submit_array_only' in iteration_cfg:
+            del iteration_cfg['_submit_array_only']
+
+        # Submit individual job (no array)
+        logging.info(f"  Submitting job for iteration {iteration_idx} (task {task_idx + 1}/{len(uncached_iterations)})")
+        job = launch_on_slurm(
+            module=str(cwd),
+            action_name=pipeline_name,
+            cfg=iteration_cfg,
+            aim_run=aim_run,
+            array_size=None,  # No array - individual job
+            dependency=None,  # No dependency - all run in parallel
+        )
+
+        # Extract job ID
+        job_id = job.job_id if hasattr(job, 'job_id') else str(job)
+        iteration_job_ids.append(job_id)
+        logging.info(f"    ✅ Submitted job {job_id} for iteration {iteration_idx}")
+
+    logging.info(f"✅ Submitted {len(iteration_job_ids)} individual jobs for uncached iterations")
+
+    # Check if there are post-loopable actions
+    loopable_idx = next((idx for idx, a in enumerate(pipeline.actions) if a.name == "__loopable_actions__"), None)
+    has_post_loopable = loopable_idx is not None and loopable_idx < len(pipeline.actions) - 1
+
+    if has_post_loopable:
+        # Submit dependency job that waits for all iteration jobs
+        # If all iterations are cached, submit immediately (no dependencies)
+        if len(iteration_job_ids) == 0:
+            dependency_str = None
+            logging.info("📋 Submitting dependency job for post-loopable actions (all iterations cached, no dependencies)")
+        else:
+            # Create dependency string: afterok:job1,afterok:job2,afterok:job3,...
+            # Use commas to chain multiple afterok clauses (AND condition - wait for ALL jobs)
+            dependency_str = ",".join([f"afterok:{job_id}" for job_id in iteration_job_ids])
+            logging.info(f"📋 Submitting dependency job for post-loopable actions (depends on {len(iteration_job_ids)} iteration jobs)")
+
+        dep_cfg = OmegaConf.create(cfg)
+        dep_cfg['_post_loopable_only'] = True
+        dep_cfg['_loop_iterations_dir'] = str(loop_iterations_dir)
+        dep_cfg['_iteration_job_ids'] = iteration_job_ids
+
+        # Remove _submit_array_only flag
+        if '_submit_array_only' in dep_cfg:
+            del dep_cfg['_submit_array_only']
+
+        # Set dependency job resources (needs more memory than submission job for aggregation)
+        # Use dependency_mem if specified, otherwise use main job memory (not submission memory)
+        if 'slurm' in dep_cfg:
+            slurm_cfg = dep_cfg['slurm']
+            dependency_mem = slurm_cfg.get('dependency_mem', None)
+            if dependency_mem is None:
+                # Fall back to main job memory (not submission memory)
+                dependency_mem = slurm_cfg.get('mem', 80)
+            dep_cfg['slurm'] = OmegaConf.create(
+                {
+                    **slurm_cfg,
+                    'mem': dependency_mem,
+                    'gpus_per_node': slurm_cfg.get('dependency_gpus_per_node', slurm_cfg.get('gpus_per_node', 1)),
+                    'cpus_per_task': slurm_cfg.get('dependency_cpus_per_task', slurm_cfg.get('cpus_per_task', 4)),
+                    'nodes': slurm_cfg.get('dependency_nodes', slurm_cfg.get('nodes', 1)),
+                    'nodelist': slurm_cfg.get('dependency_nodelist', slurm_cfg.get('nodelist', None)),
+                }
+            )
+            logging.info(
+                f"📋 Dependency job resources: {dependency_mem}GB mem, {dep_cfg['slurm']['gpus_per_node']} GPUs, {dep_cfg['slurm']['cpus_per_task']} CPUs"
+            )
+
+        from urartu.utils.execution.launcher import launch_on_slurm
+
+        dep_job = launch_on_slurm(
+            module=str(cwd),
+            action_name=pipeline_name,
+            cfg=dep_cfg,
+            aim_run=aim_run,
+            array_size=None,
+            dependency=dependency_str,
+        )
+
+        logging.info(f"✅ Submitted dependency job {dep_job.job_id} for post-loopable actions")
+    else:
+        logging.info("No post-loopable actions, skipping dependency job")
+
+    logging.info("✅ Job submission complete. Exiting submission-only job.")
+
+
+def _run_array_task(cfg: DictConfig, cwd: Path, pipeline_name: str, aim_run):
+    """
+    Run a single iteration as an individual job.
+
+    Args:
+        cfg: Configuration dictionary
+        cwd: Current working directory
+        pipeline_name: Name of the pipeline
+        aim_run: Aim run object
+    """
+    # Get iteration index from config (set when job was submitted)
+    iteration_idx = cfg.get('_iteration_idx')
+    if iteration_idx is None:
+        raise ValueError("Iteration index not found in config (_iteration_idx)")
+
+    iteration_idx = int(iteration_idx)
+    logging.info(f"📋 Running iteration {iteration_idx} (individual job)")
+
+    # Get loop iterations directory
+    run_dir = cfg.get('run_dir', '.')
+    loop_iterations_dir = Path(cfg.get('_loop_iterations_dir', str(Path(run_dir) / 'loop_iterations')))
+    iteration_config_path = loop_iterations_dir / f"{iteration_idx}.yaml"
+
+    if not iteration_config_path.exists():
+        raise FileNotFoundError(f"Iteration config not found: {iteration_config_path}")
+
+    # Load iteration context
+    iteration_cfg = OmegaConf.load(iteration_config_path)
+    loop_context = OmegaConf.to_container(iteration_cfg, resolve=True)
+    logging.info(f"📋 Loaded iteration context: {loop_context}")
+
+    # Mark this as an iteration task in the config to prevent nested parallel processing
+    cfg['_is_iteration_task'] = True
+    cfg['_iteration_idx'] = iteration_idx
+
+    # Override loop_iterations to only include this single iteration
+    # This prevents the pipeline from trying to submit another array
+    if hasattr(cfg, 'pipeline') and cfg.pipeline:
+        pipeline_cfg = cfg.pipeline
+        if isinstance(pipeline_cfg, DictConfig) or isinstance(pipeline_cfg, dict):
+            # Find the loopable_actions block and replace loop_iterations with just this one
+            actions = pipeline_cfg.get('actions', [])
+            for action in actions:
+                if isinstance(action, DictConfig) or isinstance(action, dict):
+                    if 'loopable_actions' in action:
+                        loopable_block = action['loopable_actions']
+                        # Replace loop_iterations with just this single iteration
+                        loopable_block['loop_iterations'] = [loop_context]
+                        logging.info(f"📋 Overrode loop_iterations to only include iteration {iteration_idx}")
+
+    # Load and instantiate pipeline
+    sys.path.append(str(cwd / "pipelines"))
+    pipeline_module = __import__(pipeline_name, fromlist=[pipeline_name])
+    pipeline_class = getattr(pipeline_module, pipeline_name.replace('_', ' ').title().replace(' ', ''), None)
+    if not pipeline_class:
+        # Try to find any class that looks like a pipeline
+        for attr_name in dir(pipeline_module):
+            attr = getattr(pipeline_module, attr_name)
+            if isinstance(attr, type) and hasattr(attr, 'main'):
+                pipeline_class = attr
+                break
+
+    if not pipeline_class:
+        raise ValueError(f"Could not find pipeline class in {pipeline_name}")
+
+    pipeline = pipeline_class(cfg, aim_run)
+    if not hasattr(pipeline, '_run_single_iteration'):
+        raise AttributeError(f"Pipeline {pipeline_class.__name__} does not support single iteration execution")
+
+    # Run single iteration
+    pipeline._run_single_iteration(iteration_idx, loop_context)
+
+
+def _run_post_loopable_only(cfg: DictConfig, cwd: Path, pipeline_name: str, aim_run):
+    """
+    Run only post-loopable actions (for dependency job).
+
+    Args:
+        cfg: Configuration dictionary
+        cwd: Current working directory
+        pipeline_name: Name of the pipeline
+        aim_run: Aim run object
+    """
+    logging.info("📋 Running post-loopable actions only")
+
+    # Load and instantiate pipeline
+    sys.path.append(str(cwd / "pipelines"))
+    pipeline_module = __import__(pipeline_name, fromlist=[pipeline_name])
+    pipeline_class = getattr(pipeline_module, pipeline_name.replace('_', ' ').title().replace(' ', ''), None)
+    if not pipeline_class:
+        # Try to find any class that looks like a pipeline
+        for attr_name in dir(pipeline_module):
+            attr = getattr(pipeline_module, attr_name)
+            if isinstance(attr, type) and hasattr(attr, 'main'):
+                pipeline_class = attr
+                break
+
+    if not pipeline_class:
+        raise ValueError(f"Could not find pipeline class in {pipeline_name}")
+
+    pipeline = pipeline_class(cfg, aim_run)
+    if not hasattr(pipeline, '_run_post_loopable_only'):
+        raise AttributeError(f"Pipeline {pipeline_class.__name__} does not support post-loopable-only execution")
+
+    # Run post-loopable actions
+    pipeline._run_post_loopable_only()
+
+
 def _execute_pipeline(cfg: DictConfig, cwd: Path) -> None:
     """Execute a pipeline with the given configuration."""
     # Verify current directory is a Python module
@@ -440,6 +745,46 @@ def _execute_pipeline(cfg: DictConfig, cwd: Path) -> None:
             except ImportError:
                 raise ImportError("Please 'pip install submitit' to schedule jobs on SLURM")
 
+            # Check if pipeline has loopable actions (will use parallel processing)
+            # If so, create a submission-only job that just submits the array and exits
+            has_loopable_actions = False
+            if hasattr(cfg, 'pipeline') and cfg.pipeline:
+                pipeline_cfg = cfg.pipeline
+                if isinstance(pipeline_cfg, DictConfig) or isinstance(pipeline_cfg, dict):
+                    actions = pipeline_cfg.get('actions', [])
+                    if actions:
+                        # Check if any action has loopable_actions
+                        for action in actions:
+                            if isinstance(action, DictConfig) or isinstance(action, dict):
+                                if 'loopable_actions' in action:
+                                    has_loopable_actions = True
+                                    logging.info("🔍 Detected loopable actions in config - will create submission-only job")
+                                    break
+
+            # If loopable actions detected, create a submission-only job
+            if has_loopable_actions:
+                slurm_cfg = cfg.get('slurm', {})
+                if isinstance(slurm_cfg, DictConfig) or isinstance(slurm_cfg, dict):
+                    # Create a submission-only config that just submits the array and exits
+                    submission_cfg = OmegaConf.create(cfg)
+                    submission_cfg['slurm'] = OmegaConf.create(
+                        {
+                            **slurm_cfg,
+                            'mem': slurm_cfg.get('submission_mem', 8),
+                            'gpus_per_node': slurm_cfg.get('submission_gpus_per_node', 0),
+                            'cpus_per_task': slurm_cfg.get('submission_cpus_per_task', 1),
+                            'nodes': slurm_cfg.get('submission_nodes', 1),
+                            'nodelist': slurm_cfg.get('submission_nodelist', None),
+                        }
+                    )
+                    # Add flag to indicate this job should only submit array and exit
+                    submission_cfg['_submit_array_only'] = True
+                    cfg = submission_cfg
+                    logging.info(
+                        f"📋 Using submission resources: {slurm_cfg.get('submission_mem', 8)}GB mem, {slurm_cfg.get('submission_gpus_per_node', 0)} GPUs, {slurm_cfg.get('submission_cpus_per_task', 1)} CPUs"
+                    )
+                    logging.info(f"📋 Initial job will only submit array and exit (no pipeline execution)")
+
             try:
                 launch_on_slurm(
                     module=cwd,
@@ -460,24 +805,44 @@ def _execute_pipeline(cfg: DictConfig, cwd: Path) -> None:
                     logging.error(f"Runtime error during SLURM job execution: {e}")
                 raise
         else:
-            try:
-                # Debug: verify pipeline config before launching
-                if hasattr(cfg, 'pipeline'):
-                    pipeline_keys = list(cfg.pipeline.keys()) if hasattr(cfg.pipeline, 'keys') else []
-                    actions_count = len(cfg.pipeline.actions) if 'actions' in cfg.pipeline else 0
-                    logging.info(f"🚀 Launching pipeline with cfg.pipeline keys: {pipeline_keys[:10]}, actions: {actions_count}")
-                launch(
-                    module=cwd,
-                    action_name=pipeline_name,
-                    cfg=cfg,
-                    aim_run=aim_run,
-                )
-            except ImportError as e:
-                logging.error(f"Failed to import required module for local execution: {e}")
-                raise
-            except Exception as e:
-                logging.error(f"Error during local job execution: {e}")
-                raise
+            # Check if this is a submission-only job, array task, or post-loopable-only job
+            # IMPORTANT: Check post_loopable_only FIRST (most specific) to prevent dependency jobs
+            # from incorrectly matching submit_array_only if both flags are somehow set
+            submit_array_only = cfg.get('_submit_array_only', False)
+            is_iteration_task = cfg.get('_is_iteration_task', False)
+            post_loopable_only = cfg.get('_post_loopable_only', False)
+
+            if post_loopable_only:
+                # This is the dependency job - run only post-loopable actions
+                logging.info("🔄 Detected post-loopable-only job - running post-loopable actions")
+                _run_post_loopable_only(cfg, cwd, pipeline_name, aim_run)
+            elif is_iteration_task:
+                # This is running as an iteration job - run single iteration
+                logging.info("🔄 Detected iteration task - running single iteration")
+                _run_array_task(cfg, cwd, pipeline_name, aim_run)
+            elif submit_array_only:
+                # This is the initial submission job - only submit iteration jobs and exit
+                logging.info("🔄 Detected submission-only job - submitting iteration jobs and exiting")
+                _submit_array_only(cfg, cwd, pipeline_name, aim_run)
+            else:
+                try:
+                    # Debug: verify pipeline config before launching
+                    if hasattr(cfg, 'pipeline'):
+                        pipeline_keys = list(cfg.pipeline.keys()) if hasattr(cfg.pipeline, 'keys') else []
+                        actions_count = len(cfg.pipeline.actions) if 'actions' in cfg.pipeline else 0
+                        logging.info(f"🚀 Launching pipeline with cfg.pipeline keys: {pipeline_keys[:10]}, actions: {actions_count}")
+                    launch(
+                        module=cwd,
+                        action_name=pipeline_name,
+                        cfg=cfg,
+                        aim_run=aim_run,
+                    )
+                except ImportError as e:
+                    logging.error(f"Failed to import required module for local execution: {e}")
+                    raise
+                except Exception as e:
+                    logging.error(f"Error during local job execution: {e}")
+                    raise
     except Exception as e:
         logging.error(f"Unexpected error: {e}")
         raise

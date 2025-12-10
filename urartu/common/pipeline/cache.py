@@ -77,7 +77,14 @@ class PipelineCache:
         return cache_dir / "metadata.yaml"
 
     def save_to_cache(
-        self, cache_key: str, action_output: ActionOutput, config_hash: str, pipeline_action=None, resolve_value_func=None, get_config_hash_func=None
+        self,
+        cache_key: str,
+        action_output: ActionOutput,
+        config_hash: str,
+        pipeline_action=None,
+        resolve_value_func=None,
+        get_config_hash_func=None,
+        pipeline_common_configs=None,
     ):
         """
         Save action output to cache.
@@ -117,17 +124,52 @@ class PipelineCache:
                 pickle.dump(cache_entry, f)
 
             # Also save a human-readable metadata file
+            # CRITICAL: Use the same config that's used for cache key generation
+            # This should be the filtered, serializable config (same as _get_serializable_config())
+            # to ensure cache matching works correctly across pipelines
+            # The config should include pipeline_common_configs merged in, then filtered
             full_config = {}
-            if pipeline_action and resolve_value_func:
-                # Include the resolved config overrides
-                resolved_config_overrides = resolve_value_func(pipeline_action.config_overrides)
-                if hasattr(resolved_config_overrides, 'items'):
-                    resolved_config_overrides = (
-                        OmegaConf.to_container(resolved_config_overrides, resolve=True)
-                        if OmegaConf.is_config(resolved_config_overrides)
-                        else dict(resolved_config_overrides)
-                    )
-                    full_config = resolved_config_overrides
+            try:
+                if pipeline_action and resolve_value_func:
+                    # Get resolved config overrides (action-specific config with dependencies injected)
+                    resolved_config_overrides = resolve_value_func(pipeline_action.config_overrides)
+                    if hasattr(resolved_config_overrides, 'items'):
+                        resolved_config_overrides = (
+                            OmegaConf.to_container(resolved_config_overrides, resolve=True)
+                            if OmegaConf.is_config(resolved_config_overrides)
+                            else dict(resolved_config_overrides)
+                        )
+
+                        # Merge with pipeline_common_configs if provided (same as _run_action does)
+                        # This ensures full_config matches what's used for cache key generation
+                        if pipeline_common_configs:
+                            from omegaconf import OmegaConf
+
+                            merged_config = OmegaConf.merge(
+                                OmegaConf.create(pipeline_common_configs),  # Base (pipeline defaults)
+                                OmegaConf.create(resolved_config_overrides),  # Override (action-specific)
+                            )
+                            merged_config_dict = OmegaConf.to_container(merged_config, resolve=True)
+                        else:
+                            merged_config_dict = resolved_config_overrides
+
+                        # Filter the config the same way _get_serializable_config() does
+                        from urartu.utils.cache import filter_config_for_cache, make_serializable
+
+                        filtered_config = filter_config_for_cache(merged_config_dict)
+                        full_config = make_serializable(filtered_config)
+            except Exception as e:
+                logger.debug(f"Could not get filtered config for metadata: {e}")
+                # Fallback to resolved_config_overrides if filtering fails
+                if pipeline_action and resolve_value_func:
+                    resolved_config_overrides = resolve_value_func(pipeline_action.config_overrides)
+                    if hasattr(resolved_config_overrides, 'items'):
+                        resolved_config_overrides = (
+                            OmegaConf.to_container(resolved_config_overrides, resolve=True)
+                            if OmegaConf.is_config(resolved_config_overrides)
+                            else dict(resolved_config_overrides)
+                        )
+                        full_config = resolved_config_overrides
 
             metadata = {
                 'cache_key': cache_key,
@@ -209,21 +251,34 @@ class PipelineCache:
             logger.info(f"Cleared pipeline cache at {self.cache_dir}")
 
     @staticmethod
-    def generate_config_hash(cfg: DictConfig) -> str:
+    def generate_config_hash(cfg: DictConfig, action_name: Optional[str] = None, loop_configs: Optional[Dict[str, Any]] = None) -> str:
         """
         Generate a hash of the complete configuration to ensure cache invalidation
         when config files are modified.
 
+        This method normalizes the config to ignore pipeline structure differences
+        (e.g., single vs multiple loopable_actions blocks) so that the same action
+        configs produce the same hash across different pipeline structures.
+
+        If action_name and loop_configs are provided, only includes actions that match
+        those criteria, enabling cross-pipeline cache sharing for the same action.
+
         Args:
             cfg: The configuration to hash
+            action_name: Optional action name to filter actions (for cross-pipeline sharing)
+            loop_configs: Optional loop_configs dict to filter actions (for cross-pipeline sharing)
 
         Returns:
             A hash string representing the complete configuration
         """
         from urartu.utils.cache import make_serializable
 
-        # Include the complete configuration in the hash
-        config_for_hash = make_serializable(cfg)
+        # Normalize config to extract only action-relevant parts
+        # This ensures same action configs produce same hash regardless of pipeline structure
+        normalized_config = PipelineCache._normalize_config_for_hash(cfg, action_name=action_name, loop_configs=loop_configs)
+
+        # Include the normalized configuration in the hash
+        config_for_hash = make_serializable(normalized_config)
 
         # Convert to JSON for consistent ordering
         config_string = json.dumps(config_for_hash, sort_keys=True)
@@ -232,3 +287,98 @@ class PipelineCache:
         config_hash = hashlib.sha256(config_string.encode()).hexdigest()[:12]
 
         return config_hash
+
+    @staticmethod
+    def _normalize_config_for_hash(
+        cfg: DictConfig, action_name: Optional[str] = None, loop_configs: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Normalize config to extract only action-relevant parts, ignoring pipeline structure.
+
+        This extracts:
+        - Pipeline-level settings (experiment_name, seed, device, etc.)
+        - Model config (shared model configuration)
+        - Action configs (flattened from all loopable blocks)
+
+        If action_name and loop_configs are provided, only includes actions that match,
+        enabling cross-pipeline cache sharing for the same action.
+
+        This ensures that the same action configs produce the same hash regardless of
+        whether they're in a single loopable_actions block or multiple blocks.
+
+        Args:
+            cfg: The configuration to normalize
+            action_name: Optional action name to filter actions (for cross-pipeline sharing)
+            loop_configs: Optional loop_configs dict to filter actions (for cross-pipeline sharing)
+
+        Returns:
+            Normalized config dict with action-relevant parts only
+        """
+        normalized = {}
+
+        # Extract pipeline-level settings (if present)
+        if 'pipeline' in cfg:
+            pipeline_cfg = OmegaConf.to_container(cfg.pipeline, resolve=False)
+            if isinstance(pipeline_cfg, dict):
+                # Extract only non-structural settings that affect action outputs
+                # Exclude metadata fields like experiment_name, pipeline_name that don't affect outputs
+                # This enables cross-pipeline cache sharing for the same action configs
+                for key in ['seed', 'device', 'cache_enabled', 'force_rerun', 'cache_max_age_days', 'memory_management']:
+                    if key in pipeline_cfg:
+                        normalized[key] = pipeline_cfg[key]
+
+        # Extract model config (shared across actions)
+        if 'model' in cfg:
+            normalized['model'] = OmegaConf.to_container(cfg.model, resolve=False)
+
+        # Extract and normalize action configs
+        # This flattens all actions from all loopable blocks into a single list
+        normalized_actions = []
+
+        if 'pipeline' in cfg and 'actions' in cfg.pipeline:
+            actions_list = cfg.pipeline.actions
+            for action_cfg in actions_list:
+                if 'action_name' in action_cfg:
+                    # Regular action
+                    action_dict = OmegaConf.to_container(action_cfg, resolve=False)
+                    # Remove structural keys that don't affect execution
+                    if isinstance(action_dict, dict):
+                        # Filter: if action_name is specified, only include matching actions
+                        if action_name is not None:
+                            if action_dict.get('action_name') != action_name:
+                                continue
+                        action_dict.pop('depends_on', None)  # Dependencies are resolved before execution
+                        normalized_actions.append(action_dict)
+                elif 'loopable_actions' in action_cfg:
+                    # Loopable actions block - extract actions from within
+                    loopable_cfg = action_cfg.loopable_actions
+                    if 'actions' in loopable_cfg:
+                        for loop_action in loopable_cfg.actions:
+                            if 'action_name' in loop_action:
+                                action_dict = OmegaConf.to_container(loop_action, resolve=False)
+                                # Include loop_configs to preserve loop context injection
+                                if isinstance(action_dict, dict):
+                                    # Include loop_configs if present (affects how loop context is injected)
+                                    current_loop_configs = None
+                                    if 'loop_configs' in loopable_cfg:
+                                        current_loop_configs = OmegaConf.to_container(loopable_cfg.loop_configs, resolve=False)
+                                        action_dict['_loop_configs'] = current_loop_configs
+
+                                    # Filter: if action_name and loop_configs are specified, only include matching actions
+                                    if action_name is not None:
+                                        if action_dict.get('action_name') != action_name:
+                                            continue
+                                        # If loop_configs is specified, only include actions with matching loop_configs
+                                        if loop_configs is not None:
+                                            if current_loop_configs != loop_configs:
+                                                continue
+
+                                    # Remove structural keys
+                                    action_dict.pop('depends_on', None)
+                                    normalized_actions.append(action_dict)
+
+        # Sort actions by action_name for consistent ordering
+        normalized_actions.sort(key=lambda x: x.get('action_name', ''))
+        normalized['actions'] = normalized_actions
+
+        return normalized
