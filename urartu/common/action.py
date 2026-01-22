@@ -298,8 +298,14 @@ class Action(ABC):
         Get the run directory for this action for saving plots, visualizations, and human-readable outputs.
 
         IMPORTANT: Plots and visualizations should ALWAYS be saved to run_dir, NOT to cache.
-        They should be regenerated from cached data every time the action runs, ensuring they
+        They should be regenerated from cached plot data every time the action runs, ensuring they
         reflect the latest visualization code and are always up-to-date.
+
+        Plot Data Caching:
+        - Action results should be cached using get_cache_entry_dir()
+        - Plot data (processed data needed for plotting) should be cached using PlottingMixin.save_plot_data()
+        - Plots themselves are regenerated in create_plots() by loading plot data from cache
+        - This allows plots to be regenerated without re-running the action
 
         This is the main API for actions to get their run directory. The run_dir is unique
         per run and contains human-readable outputs like plots, reports, and documentation.
@@ -323,6 +329,7 @@ class Action(ABC):
 
         Note:
             - Use get_cache_entry_dir() for machine-readable data that should be cached
+            - Use PlottingMixin.save_plot_data() for plot data (processed data for plotting)
             - Use get_run_dir() for human-readable outputs like plots that should be regenerated
             - For loopable actions, outputs are organized by iteration (e.g., .runs/pipeline/timestamp/action_name/iteration_id/plots/)
         """
@@ -470,6 +477,9 @@ class Action(ABC):
         Returns:
             Dict[str, Any]: A dictionary of output keys and values.
         """
+        # If action was loaded from cache, return cached outputs
+        if hasattr(self, '_cached_outputs') and self._cached_outputs:
+            return self._cached_outputs
         return {}
 
     @staticmethod
@@ -946,6 +956,67 @@ class Action(ABC):
             self._save_to_cache(outputs)
             # Don't set _cached_outputs here - it should only be set when loading FROM cache
             # This allows the pipeline to distinguish between "executed" vs "from cache"
+
+    def run_with_full_automation(self):
+        """
+        Fully automated run with caching and plot data extraction.
+
+        Handles:
+        - Cache checking and loading
+        - Running action if needed
+        - Saving results to cache
+        - Extracting and saving plot data automatically
+
+        This method is the recommended entry point for actions that implement
+        the new pattern with _run_impl() and _extract_plot_data().
+        """
+        # Generate cache key once and store it to ensure consistency
+        self._cache_key = self._generate_cache_key()
+
+        # Resolve portable paths to absolute paths for actual use
+        self._resolve_config_paths(self._runs_dir)
+
+        # Check cache first
+        cached_outputs = self._load_from_cache()
+        if cached_outputs is not None:
+            self._cached_outputs = cached_outputs
+            return
+
+        # Cache miss - run the action
+        logger.debug(f"Running {self.__class__.__name__} (cache miss)")
+
+        # Initialize if method exists
+        if hasattr(self, 'initialize'):
+            self.initialize()
+
+        # Run core logic - prefer _run_impl() for new pattern, fall back to run()/main()
+        if hasattr(self, '_run_impl'):
+            self._run_impl()
+        elif hasattr(self, 'run'):
+            self.run()
+        elif hasattr(self, 'main'):
+            self.main()
+        else:
+            raise NotImplementedError(f"Action {self.__class__.__name__} must implement _run_impl(), run(), or main() method")
+
+        # Save results to cache
+        outputs = self.get_outputs()
+        if outputs:
+            self._save_to_cache(outputs)
+
+        # Automatically extract and save plot data if action implements _extract_plot_data()
+        if hasattr(self, '_extract_plot_data'):
+            try:
+                plot_data = self._extract_plot_data()
+                if plot_data:
+                    # Check if PlottingMixin is available
+                    if hasattr(self, 'save_plot_data'):
+                        self.save_plot_data(plot_data)
+                        logger.debug(f"💾 Automatically saved plot data for {self.__class__.__name__}")
+                    else:
+                        logger.warning(f"⚠️  Action {self.__class__.__name__} implements _extract_plot_data() but doesn't inherit PlottingMixin")
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to extract plot data for {self.__class__.__name__}: {e}")
 
     def clear_cache(self):
         """Clear the cache for this action."""

@@ -861,8 +861,13 @@ class Pipeline:
             # Note: No need to override cache_dir - all actions and pipelines share universal cache
             # The cache_dir is already set correctly in Action instances
 
-            # Run the action with its own caching support
-            if hasattr(action_instance, 'run_with_cache'):
+            # Run the action with full automation if it implements the new pattern
+            # Otherwise fall back to run_with_cache() for backward compatibility
+            if hasattr(action_instance, '_run_impl'):
+                # New pattern: use full automation
+                action_instance.run_with_full_automation()
+            elif hasattr(action_instance, 'run_with_cache'):
+                # Legacy pattern: use existing caching
                 action_instance.run_with_cache()
             elif hasattr(action_instance, 'run'):
                 action_instance.run()
@@ -871,15 +876,33 @@ class Pipeline:
             else:
                 raise AttributeError(f"Action {pipeline_action.action_name} has no run() or main() method")
 
-            # Always call create_plots() if it exists, even if action was cached
-            # This ensures plots are always regenerated from cached data
-            if hasattr(action_instance, 'create_plots'):
-                logger.debug(f"📊 Calling create_plots() for action {pipeline_action.name}")
-                try:
-                    action_instance.create_plots()
-                except Exception as e:
-                    logger.error(f"❌ Error in create_plots() for {pipeline_action.name}: {e}", exc_info=True)
-                    # Don't fail the pipeline if plotting fails, just log the error
+            # Check if plotting is enabled for this action
+            plotting_enabled = True
+            if hasattr(action_instance, 'action_config') and action_instance.action_config:
+                plotting_config = action_instance.action_config.get('plotting', {})
+                plotting_enabled = plotting_config.get('enabled', True)
+
+            # Generate plots if enabled and action supports it
+            if plotting_enabled:
+                # Use new automation pattern if action implements _generate_plots()
+                if hasattr(action_instance, '_generate_plots'):
+                    logger.debug(f"📊 Calling create_plots_with_automation() for action {pipeline_action.name}")
+                    try:
+                        if hasattr(action_instance, 'create_plots_with_automation'):
+                            action_instance.create_plots_with_automation()
+                        else:
+                            # Fallback: manually check and call _generate_plots
+                            if hasattr(action_instance, 'should_generate_plots') and action_instance.should_generate_plots():
+                                plot_data = action_instance._ensure_plot_data() if hasattr(action_instance, '_ensure_plot_data') else None
+                                if plot_data:
+                                    action_instance.apply_plot_style()
+                                    action_instance._generate_plots(plot_data)
+                                else:
+                                    raise ValueError(f"No plot data available for {pipeline_action.name}")
+                    except Exception as e:
+                        logger.error(f"❌ Error in create_plots_with_automation() for {pipeline_action.name}: {e}", exc_info=True)
+            else:
+                logger.debug(f"⏭️  Skipping plots for {pipeline_action.name} (plotting.enabled=false)")
 
             # Extract outputs
             outputs = self._extract_outputs(pipeline_action, action_instance)
@@ -976,24 +999,23 @@ class Pipeline:
                     logger.warning(f"⚠️ Found loopable_actions block but Pipeline doesn't support it. Use LoopablePipeline instead.")
                     continue
 
-                    # Regular action
-                    # Regular action
-                    action_name = action_cfg.get('action_name', 'unknown')
-                    logger.info(f"📥 Loading action {idx+1}/{len(actions_list)}: {action_name}")
+                # Regular action
+                action_name = action_cfg.get('action_name', 'unknown')
+                logger.info(f"📥 Loading action {idx+1}/{len(actions_list)}: {action_name}")
 
-                    # Use generic method to extract action config (handles any block structures)
-                    config_overrides = self._extract_action_config(
-                        config_obj=action_cfg, action_name=action_name, block_keys=['loopable_actions', 'actions']
-                    )
+                # Use generic method to extract action config (handles any block structures)
+                config_overrides = self._extract_action_config(
+                    config_obj=action_cfg, action_name=action_name, block_keys=['loopable_actions', 'actions']
+                )
 
-                    # Fallback to simple extraction if generic method returns None
-                    if config_overrides is None:
-                        logger.warning(f"⚠️ Generic extraction failed for '{action_name}', using simple extraction")
-                        # Get all config except metadata keys
-                        # IMPORTANT: Keep 'depends_on' - it will be processed during action execution by _inject_action_outputs
-                        config_overrides = {
-                            k: v for k, v in action_cfg.items() if k not in ['action_name', 'outputs_to_track', 'loopable_actions', 'actions']
-                        }
+                # Fallback to simple extraction if generic method returns None
+                if config_overrides is None:
+                    logger.warning(f"⚠️ Generic extraction failed for '{action_name}', using simple extraction")
+                    # Get all config except metadata keys
+                    # IMPORTANT: Keep 'depends_on' - it will be processed during action execution by _inject_action_outputs
+                    config_overrides = {
+                        k: v for k, v in action_cfg.items() if k not in ['action_name', 'outputs_to_track', 'loopable_actions', 'actions']
+                    }
 
                 action = PipelineAction(
                     name=action_name,  # Use action_name as the name

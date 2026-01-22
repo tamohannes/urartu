@@ -291,9 +291,9 @@ class LoopableCacheMixin:
                         normalized_current = make_serializable(serializable_config)
 
                         # Log current config for debugging
-                        logger.info(f"   📋 CURRENT config being checked:")
-                        logger.info(f"      Keys: {sorted(normalized_current.keys())}")
-                        logger.info(f"      Full config JSON: {json.dumps(normalized_current, sort_keys=True, indent=2)}")
+                        logger.debug(f"   📋 CURRENT config being checked:")
+                        logger.debug(f"      Keys: {sorted(normalized_current.keys())}")
+                        logger.debug(f"      Full config JSON: {json.dumps(normalized_current, sort_keys=True, indent=2)}")
 
                         # Try each existing cache directory
                         for idx, existing_hash in enumerate(existing_dirs):

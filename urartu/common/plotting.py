@@ -6,6 +6,7 @@ for managing plot styles, color palettes, and saving plots.
 """
 
 import logging
+import pickle
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -356,3 +357,167 @@ class PlottingMixin:
         plot_config = self.get_plot_config()
         style_config = plot_config.get("style", OmegaConf.create({}))
         Plotter.apply_matplotlib_style(style_config)
+
+    def get_plot_data_cache_path(self, filename: str = "plot_data.pkl") -> Path:
+        """
+        Get the cache path for plot data.
+
+        Plot data is stored in the same cache directory as action results,
+        but in a separate 'plot_data' subdirectory to keep it organized.
+
+        Args:
+            filename: Name of the plot data file (default: "plot_data.pkl")
+
+        Returns:
+            Path to the plot data cache file
+
+        Example:
+            # Save plot data
+            plot_data = {"accuracies": [...], "f1_scores": [...]}
+            cache_path = self.get_plot_data_cache_path()
+            with open(cache_path, "wb") as f:
+                pickle.dump(plot_data, f)
+
+            # Load plot data in create_plots()
+            cache_path = self.get_plot_data_cache_path()
+            if cache_path.exists():
+                with open(cache_path, "rb") as f:
+                    plot_data = pickle.load(f)
+        """
+        if not hasattr(self, 'get_cache_entry_dir'):
+            raise AttributeError(
+                "PlottingMixin requires Action base class with get_cache_entry_dir() method. "
+                "Ensure your class inherits from both Action and PlottingMixin."
+            )
+        cache_dir = self.get_cache_entry_dir("plot_data")
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir / filename
+
+    def save_plot_data(self, plot_data: Dict[str, Any], filename: str = "plot_data.pkl") -> Path:
+        """
+        Save plot data to cache.
+
+        Plot data contains the processed data needed to regenerate plots,
+        separate from the raw action results. This allows create_plots() to
+        regenerate plots without re-running the action.
+
+        Args:
+            plot_data: Dictionary containing plot data (e.g., accuracies, F1 scores, etc.)
+            filename: Name of the plot data file (default: "plot_data.pkl")
+
+        Returns:
+            Path to the saved plot data file
+
+        Example:
+            # In run() method, after processing data:
+            plot_data = {
+                "accuracies": self.accuracies,
+                "f1_scores": self.f1_scores,
+                "classifiers_by_entity_type": self.classifiers_by_entity_type,
+            }
+            self.save_plot_data(plot_data)
+        """
+        cache_path = self.get_plot_data_cache_path(filename)
+        with open(cache_path, "wb") as f:
+            pickle.dump(plot_data, f)
+        logger.info(f"💾 Saved plot data to {cache_path}")
+        return cache_path
+
+    def load_plot_data(self, filename: str = "plot_data.pkl") -> Optional[Dict[str, Any]]:
+        """
+        Load plot data from cache.
+
+        Args:
+            filename: Name of the plot data file (default: "plot_data.pkl")
+
+        Returns:
+            Dictionary containing plot data, or None if not found
+
+        Example:
+            # In create_plots() method:
+            plot_data = self.load_plot_data()
+            if plot_data:
+                accuracies = plot_data["accuracies"]
+                f1_scores = plot_data["f1_scores"]
+                # ... regenerate plots from plot_data
+        """
+        cache_path = self.get_plot_data_cache_path(filename)
+        if not cache_path.exists():
+            return None
+        with open(cache_path, "rb") as f:
+            plot_data = pickle.load(f)
+        logger.debug(f"📖 Loaded plot data from {cache_path}")
+        return plot_data
+
+    def has_plot_data(self, filename: str = "plot_data.pkl") -> bool:
+        """
+        Check if plot data exists in cache.
+
+        Args:
+            filename: Name of the plot data file (default: "plot_data.pkl")
+
+        Returns:
+            True if plot data exists, False otherwise
+        """
+        cache_path = self.get_plot_data_cache_path(filename)
+        return cache_path.exists()
+
+    def should_generate_plots(self) -> bool:
+        """
+        Check if plotting is enabled for this action.
+
+        Returns:
+            True if plotting is enabled, False otherwise
+        """
+        plot_config = self.get_plot_config()
+        return plot_config.get("enabled", True)
+
+    def _ensure_plot_data(self, filename: str = "plot_data.pkl") -> Optional[Dict[str, Any]]:
+        """
+        Ensure plot data exists, loading from cache.
+
+        Args:
+            filename: Name of the plot data file (default: "plot_data.pkl")
+
+        Returns:
+            Plot data dict or None if unavailable
+        """
+        return self.load_plot_data(filename)
+
+    def create_plots_with_automation(self, filename: str = "plot_data.pkl"):
+        """
+        Automated plot generation wrapper.
+
+        Handles:
+        - Checking if plotting is enabled
+        - Loading plot data
+        - Calling _generate_plots() if data available
+        - Error handling and logging
+
+        Args:
+            filename: Name of the plot data file (default: "plot_data.pkl")
+        """
+        if not self.should_generate_plots():
+            logger.debug(f"⏭️  Plotting disabled for {self.__class__.__name__}")
+            return
+
+        plot_data = self._ensure_plot_data(filename)
+        if plot_data and hasattr(self, '_generate_plots'):
+            self.apply_plot_style()
+            self._generate_plots(plot_data)
+        elif not plot_data:
+            # Check if action was cached (indicates old cache format without plot data)
+            was_cached = getattr(self, '_cached_outputs', None) is not None
+            if was_cached:
+                logger.warning(
+                    f"⚠️  No plot data available for {self.__class__.__name__} (action was loaded from cache). "
+                    f"This cache was created before the new plot data system was implemented. "
+                    f"To generate plots, clear the cache and re-run the action: "
+                    f"`action_instance.clear_cache()` or set `force_rerun: true` in config."
+                )
+            else:
+                raise ValueError(
+                    f"No plot data available for {self.__class__.__name__}. "
+                    f"Expected plot data file: {self.get_plot_data_cache_path(filename)}. "
+                    "Run the action first to generate plot data."
+                )

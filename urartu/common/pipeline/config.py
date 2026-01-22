@@ -307,10 +307,9 @@ class ConfigInjector:
         # Define which pipeline-level configs should NOT be propagated to actions
         pipeline_specific_keys = {
             'actions',  # List of actions in the pipeline
-            'cache_enabled',  # Pipeline-level caching control
-            'force_rerun',  # Pipeline-level cache bypass
-            'cache_max_age_hours',  # Pipeline-level cache expiry (hours)
-            'cache_max_age_days',  # Pipeline-level cache expiry (days)
+            'cache_enabled',  # Pipeline-level caching control (actions have their own)
+            # Note: force_rerun, cache_max_age_* SHOULD be propagated to actions
+            # so that actions respect the pipeline-level cache settings
         }
 
         logger.debug(f"🔧 Pipeline config propagation debug:")

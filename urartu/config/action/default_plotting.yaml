@@ -3,6 +3,10 @@
 # Actions can override these settings in their action config under the "plotting" key
 
 plotting:
+  # Enable/disable plotting for this action
+  # Set to false in pipeline config to skip plot generation
+  enabled: true
+  
   # Directory structure
   # All plots will be saved to: run_dir/plots_subdirectory/
   plots_subdirectory: "plots"
