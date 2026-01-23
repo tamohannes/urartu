@@ -6,208 +6,145 @@
 
 <!--- BADGES: END --->
 
-# **Urartu 🦁**
+# Urartu
 
-**The intelligent ML Pipeline Framework that chains actions into powerful workflows!**
+Urartu is an ML workflow runner built around **Pipelines** (orchestrators) and **Actions** (reusable steps) with **automatic caching** and **dependency injection**.
 
-Urartu is a framework for building machine learning workflows by chaining **Actions** into **Pipelines**. Each Action is a self-contained, reusable component with built-in caching, and Pipelines orchestrate multiple Actions with automatic data flow.
-
-# **Installation**
+## Installation
 
 ```bash
 pip install urartu
 ```
 
-Or from source:
-    ```bash
-git clone git@github.com:tamohannes/urartu.git
-    cd urartu
-    pip install -e .
-    ```
-
-# **Quick Start**
-
-## **Running Pipelines**
+From source:
 
 ```bash
-# Run a pipeline (pipeline name is the first argument)
-urartu my_pipeline
-
-# With config group selectors (unquoted = config group, quoted = string override)
-urartu my_pipeline machine=local aim=local slurm=no_slurm debug=true
-
-# With string overrides (quoted values)
-urartu my_pipeline machine="custom" descr="my experiment"
+git clone git@github.com:tamohannes/urartu.git
+cd urartu
+pip install -e .
 ```
 
-## **Project Structure**
+## Project layout (recommended)
+
+Run the CLI from a project root that contains:
 
 ```
 my_project/
-├── actions/              # Action implementations
+├── __init__.py
+├── actions/
+│   ├── __init__.py
 │   └── my_action.py
-├── pipelines/            # Pipeline implementations
+├── pipelines/
+│   ├── __init__.py
 │   └── my_pipeline.py
 └── configs/
-    ├── action/           # Action configurations
-    │   └── my_action.yaml
-    └── pipeline/         # Pipeline configurations
+    └── pipeline/
         └── my_pipeline.yaml
 ```
 
-# **Core Concepts**
+Optional (per-user configs):
 
-## **Actions**
+```
+my_project/
+└── configs_<username>/
+    ├── aim/
+    ├── machine/
+    └── slurm/
+```
 
-Actions are self-contained components that perform specific ML tasks:
+## Quickstart
+
+Create a pipeline config:
+
+```yaml
+# configs/pipeline/my_pipeline.yaml
+pipeline_name: my_pipeline
+debug: false
+
+pipeline:
+  experiment_name: "My pipeline"
+  device: auto
+  seed: 42
+
+  # Pipeline-level cache policy (propagates to actions)
+  cache_enabled: true
+  force_rerun: false
+  cache_max_age_days: 7
+
+  actions:
+    - action_name: my_action
+      # Action-specific config (merged with pipeline-level common settings)
+      some_param: 123
+```
+
+Create the pipeline file:
 
 ```python
+from aim import Run
+from omegaconf import DictConfig
+from urartu.common import Pipeline
+
+
+class MyPipeline(Pipeline):
+    pass
+
+
+def main(cfg: DictConfig, aim_run: Run):
+    MyPipeline(cfg, aim_run).main()
+```
+
+Create an action:
+
+```python
+from omegaconf import DictConfig
+from aim import Run
 from urartu.common import Action
+
 
 class MyAction(Action):
     def run(self):
-        # Your ML task here
-        data = self.load_data()
-        results = self.process(data)
-        
-        # Save to cache using unified API
-        cache_dir = self.get_cache_entry_dir("my_data")
-        # Save machine-readable data to cache
-        
-        # Save plots to run directory (always regenerated)
-        plots_dir = self.get_run_dir("plots")
-        # Save human-readable outputs here
-    
+        cache_dir = self.get_cache_entry_dir()
+        run_dir = self.get_run_dir()
+        # ... compute, write machine-readable artifacts to cache_dir ...
+        # ... write plots/reports to run_dir ...
+
     def get_outputs(self):
         return {
-            "results_path": str(self.get_cache_entry_dir("results")),
-            "run_dir": str(self.get_run_dir())
+            "cache_dir": str(self.get_cache_entry_dir()),
+            "run_dir": str(self.get_run_dir()),
         }
 ```
 
-## **Pipelines**
-
-Pipelines chain Actions together with automatic dependency resolution:
-
-```yaml
-# configs/pipeline/my_pipeline.yaml
-pipeline_name: my_pipeline
-
-pipeline:
-  device: cuda
-  seed: 42
-  actions:
-    - action_name: data_preprocessing
-      dataset:
-        source: "data.csv"
-    
-    - action_name: model_training
-      depends_on:
-        data_preprocessing:
-          processed_data: dataset.data_path
-      model:
-        architecture: "transformer"
-```
-
-## **Configuration**
-
-### **Action Config**
-```yaml
-# configs/action/my_action.yaml
-action_name: my_action
-
-action:
-  experiment_name: "My Experiment"
-  device: cuda
-  dataset:
-    source: "data.csv"
-```
-
-### **Pipeline Config**
-```yaml
-# configs/pipeline/my_pipeline.yaml
-pipeline_name: my_pipeline
-
-pipeline:
-  experiment_name: "My Pipeline"
-  device: cuda
-  actions:
-    - action_name: action1
-    - action_name: action2
-```
-
-# **Key Features**
-
-## **Unified Caching**
-
-Actions automatically cache results. Use the unified APIs:
-
-```python
-# For machine-readable cached data
-cache_dir = self.get_cache_entry_dir("subdirectory")
-# Structure: cache/{action_name}/{cache_hash}/{subdirectory}/
-
-# For human-readable outputs (plots, reports)
-run_dir = self.get_run_dir("plots")
-# Structure: .runs/{pipeline_name}/{timestamp}/{subdirectory}/
-```
-
-**Important**: Plots should always be saved to `run_dir` and regenerated from cached data.
-
-## **Dependency Resolution**
-
-Pipelines automatically inject outputs from previous actions:
-
-```yaml
-- action_name: model_training
-  depends_on:
-    data_preprocessing:
-      processed_data: dataset.data_path
-      stats: model.feature_stats
-```
-
-## **Caching Configuration**
-
-```yaml
-action:
-  cache_enabled: true
-  force_rerun: false
-  cache_max_age_days: 7
-
-pipeline:
-  cache_enabled: true
-  force_rerun: false
-  cache_max_age_days: 7
-```
-
-# **Advanced Usage**
-
-## **Remote Execution**
-
-Execute workflows on remote machines:
-
-```yaml
-# configs_tamoyan/machine/remote.yaml
-type: remote
-host: "cluster.example.com"
-username: "user"
-ssh_key: "~/.ssh/id_rsa"
-remote_workdir: "/path/to/workspace"
-project_name: "my_project"
-```
+Run it:
 
 ```bash
-urartu my_pipeline machine=remote slurm=slurm
+urartu my_pipeline
 ```
 
-## **Multi-run**
+## CLI overrides and config groups
+
+- **Overrides**: `pipeline.seed=123`, `pipeline.device=cuda`, `descr="my run"`.
+- **Config-group selectors** (unquoted) load `*.yaml` files from:
+  - `configs_<username>/<group>/<selector>.yaml`
+  - `configs/<group>/<selector>.yaml`
+  - built-in defaults in the Urartu package
+
+Examples:
 
 ```bash
-# Note: Multirun/sweep functionality is not yet implemented in the new CLI
-# For now, use nested loops in your pipeline code or run multiple times manually
+# Select config files (unquoted values)
+urartu my_pipeline machine=local slurm=no_slurm aim=no_aim
+
+# Set literal strings (quoted values)
+urartu my_pipeline descr="experiment 001" machine="local"
 ```
 
-# **Citation**
+## Notes on outputs and caching
+
+- **Cached, machine-readable artifacts**: write under `self.get_cache_entry_dir(...)` (shared across runs).
+- **Run artifacts (plots/reports/logs)**: write under `self.get_run_dir(...)` (unique per run).
+
+## Citation
 
 If you find Urartu helpful in your research, please cite it:
 
