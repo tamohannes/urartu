@@ -36,6 +36,58 @@ class PipelineStatusDisplay:
         if run_dir:
             self.status_file = Path(run_dir) / "pipeline_status.txt"
 
+    def _check_for_errors(self, action_name: Optional[str] = None) -> bool:
+        """
+        Check if there are any errors in .err files in the run directory.
+
+        Args:
+            action_name: Optional action name to check for specific error files
+
+        Returns:
+            True if errors are found, False otherwise
+        """
+        if not self.run_dir:
+            return False
+
+        run_dir_path = Path(self.run_dir)
+        if not run_dir_path.exists():
+            return False
+
+        # Check for .err files in the run directory
+        err_files = list(run_dir_path.glob("*_log.err"))
+        
+        # Also check for any .err files if action_name is provided (for future use)
+        if action_name:
+            # Could check for action-specific error files if needed
+            pass
+
+        # Check if any .err file has content (non-empty)
+        for err_file in err_files:
+            try:
+                if err_file.exists() and err_file.stat().st_size > 0:
+                    # Read the file and check if it contains actual errors (not just warnings)
+                    with open(err_file, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read().strip()
+                        if not content:
+                            continue
+                        
+                        # Ignore common non-critical warnings (deprecation notices, etc.)
+                        if re.search(r'is deprecated|UserWarning|FutureWarning|DeprecationWarning', content, re.IGNORECASE):
+                            continue
+                        
+                        # Check for actual error indicators
+                        if re.search(r'Error:|Exception:|Traceback|Fatal|failed|FAILED|CRITICAL', content, re.IGNORECASE):
+                            return True
+                        
+                        # If content exists but doesn't match error patterns and isn't a known warning,
+                        # and it's substantial (more than 10 chars), treat as potential error
+                        if len(content) > 10:
+                            return True
+            except Exception as e:
+                logger.debug(f"Error checking {err_file}: {e}")
+
+        return False
+
     def print_status(self, all_actions: List[PipelineAction], statuses: Dict[str, Dict], current_index: int):
         """
         Print a clean, colorful status view of pipeline progress.
@@ -49,6 +101,7 @@ class PipelineStatusDisplay:
         GREEN = '\033[92m'  # Bright green for completed
         BLUE = '\033[94m'  # Bright blue for cached
         GRAY = '\033[90m'  # Gray for pending
+        RED = '\033[91m'  # Bright red for failed
         BOLD = '\033[1m'  # Bold text
         RESET = '\033[0m'  # Reset to default
 
@@ -76,6 +129,7 @@ class PipelineStatusDisplay:
                 '📊',  # U+1F4CA Bar Chart
                 '⭕',  # U+2B55 Hollow Red Circle
                 '🔄',  # U+1F504 Counterclockwise Arrows Button
+                '❌',  # U+274C Cross Mark
             }
 
             # Calculate width
@@ -146,14 +200,17 @@ class PipelineStatusDisplay:
                             # Count cached vs executed iterations for this action
                             cached_count = 0
                             executed_count = 0
+                            failed_count = 0
                             action_found = False
 
                             for key in statuses.keys():
                                 if key.startswith(loopable_action_name + "_"):
                                     action_status = statuses[key]
-                                    if action_status.get('completed', False):
+                                    if action_status.get('completed', False) or action_status.get('failed', False):
                                         action_found = True
-                                        if action_status.get('cached', False):
+                                        if action_status.get('failed', False):
+                                            failed_count += 1
+                                        elif action_status.get('cached', False):
                                             cached_count += 1
                                         else:
                                             executed_count += 1
@@ -161,6 +218,8 @@ class PipelineStatusDisplay:
                             if action_found:
                                 # Build status string with counts
                                 status_parts = []
+                                if failed_count > 0:
+                                    status_parts.append(f"{failed_count} failed")
                                 if executed_count > 0:
                                     status_parts.append(f"{executed_count} executed")
                                 if cached_count > 0:
@@ -168,8 +227,11 @@ class PipelineStatusDisplay:
 
                                 status_str = f"({', '.join(status_parts)})" if status_parts else ""
 
-                                # Choose emoji and color based on whether all were cached
-                                if cached_count > 0 and executed_count == 0:
+                                # Choose emoji and color based on status
+                                if failed_count > 0:
+                                    # Has failures - red with cross mark
+                                    line = f"    {RED}  ❌ {loopable_action_name} {status_str}{RESET}"
+                                elif cached_count > 0 and executed_count == 0:
                                     # All cached - blue with disk emoji
                                     line = f"    {BLUE}  ✅ {loopable_action_name} 💾 {status_str}{RESET}"
                                 elif executed_count > 0:
@@ -220,7 +282,7 @@ class PipelineStatusDisplay:
                                 1 for key in statuses.keys() if key.startswith(loopable_action_name + "_") and statuses[key].get('completed', False)
                             )
 
-                            # Count cached vs executed for completed iterations
+                            # Count cached vs executed vs failed for completed iterations
                             cached_count = sum(
                                 1
                                 for key in statuses.keys()
@@ -228,7 +290,13 @@ class PipelineStatusDisplay:
                                 and statuses[key].get('completed', False)
                                 and statuses[key].get('cached', False)
                             )
-                            executed_count = completed_iterations - cached_count
+                            failed_count = sum(
+                                1
+                                for key in statuses.keys()
+                                if key.startswith(loopable_action_name + "_")
+                                and statuses[key].get('failed', False)
+                            )
+                            executed_count = completed_iterations - cached_count - failed_count
 
                             # Check if action is currently running by checking iteration-specific statuses
                             is_running = False
@@ -238,10 +306,12 @@ class PipelineStatusDisplay:
                                     is_running = True
                                     running_count += 1
 
-                            # Build status string with counts (including running)
+                            # Build status string with counts (including running and failed)
                             status_parts = []
                             if running_count > 0:
                                 status_parts.append(f"{running_count} running")
+                            if failed_count > 0:
+                                status_parts.append(f"{failed_count} failed")
                             if executed_count > 0:
                                 status_parts.append(f"{executed_count} executed")
                             if cached_count > 0:
@@ -251,18 +321,25 @@ class PipelineStatusDisplay:
 
                             if is_running:
                                 # Currently running - show as in progress with running indicator
-                                if completed_iterations > 0:
-                                    # Some completed, some running
-                                    if cached_count > 0 and executed_count == 0:
+                                if completed_iterations > 0 or failed_count > 0:
+                                    # Some completed/failed, some running
+                                    if failed_count > 0:
+                                        line = f"    {RED}  🔄 {loopable_action_name} ({completed_iterations}/{num_iterations}) {status_str}{RESET}"
+                                    elif cached_count > 0 and executed_count == 0:
                                         line = f"    {GREEN}  🔄 {loopable_action_name} ({completed_iterations}/{num_iterations}) {status_str}{RESET}"
                                     else:
                                         line = f"    {GREEN}  🔄 {loopable_action_name} ({completed_iterations}/{num_iterations}) {status_str}{RESET}"
                                 else:
                                     # Just starting, nothing completed yet
                                     line = f"    {GREEN}  🔄 {loopable_action_name} (running...){RESET}"
-                            elif completed_iterations > 0:
-                                # In progress - show with ✅ and progress
-                                if completed_iterations < num_iterations:
+                            elif completed_iterations > 0 or failed_count > 0:
+                                # In progress - show with ✅ or ❌ and progress
+                                if failed_count > 0:
+                                    # Has failures - show with ❌
+                                    line = (
+                                        f"    {RED}  ❌ {loopable_action_name} ({completed_iterations}/{num_iterations}) {status_str}{RESET}"
+                                    )
+                                elif completed_iterations < num_iterations:
                                     # Some iterations done, but not all
                                     if cached_count > 0 and executed_count == 0:
                                         line = (
@@ -298,7 +375,11 @@ class PipelineStatusDisplay:
                 if i < current_index:
                     # Completed action
                     status = statuses.get(action.name, {})
-                    if status.get('cached', False):
+                    # Check if action failed
+                    if status.get('failed', False) or self._check_for_errors(action.name):
+                        # Failed action - red with cross mark
+                        line = f"  {RED}❌ {action.name} (failed){RESET}"
+                    elif status.get('cached', False):
                         # Loaded from cache - blue with disk emoji
                         line = f"  {BLUE}✅ {action.name} 💾 (from cache){RESET}"
                     else:
@@ -380,26 +461,34 @@ class PipelineStatusDisplay:
                             for loopable_action_name in self.loopable_actions:
                                 cached_count = 0
                                 executed_count = 0
+                                failed_count = 0
                                 action_found = False
 
                                 for key in statuses.keys():
                                     if key.startswith(loopable_action_name + "_"):
                                         action_status = statuses[key]
-                                        if action_status.get('completed', False):
+                                        if action_status.get('completed', False) or action_status.get('failed', False):
                                             action_found = True
-                                            if action_status.get('cached', False):
+                                            if action_status.get('failed', False):
+                                                failed_count += 1
+                                            elif action_status.get('cached', False):
                                                 cached_count += 1
                                             else:
                                                 executed_count += 1
 
                                 if action_found:
                                     status_parts = []
+                                    if failed_count > 0:
+                                        status_parts.append(f"{failed_count} failed")
                                     if executed_count > 0:
                                         status_parts.append(f"{executed_count} executed")
                                     if cached_count > 0:
                                         status_parts.append(f"{cached_count} from cache")
                                     status_str = f"({', '.join(status_parts)})" if status_parts else ""
-                                    status_lines.append(f"    ✅ {loopable_action_name} {status_str}")
+                                    if failed_count > 0:
+                                        status_lines.append(f"    ❌ {loopable_action_name} {status_str}")
+                                    else:
+                                        status_lines.append(f"    ✅ {loopable_action_name} {status_str}")
                                 else:
                                     status_lines.append(f"    ✅ {loopable_action_name}")
                         else:
@@ -438,7 +527,7 @@ class PipelineStatusDisplay:
                                     if key.startswith(loopable_action_name + "_") and statuses[key].get('completed', False)
                                 )
 
-                                # Count cached vs executed
+                                # Count cached vs executed vs failed
                                 cached_count = sum(
                                     1
                                     for key in statuses.keys()
@@ -446,7 +535,13 @@ class PipelineStatusDisplay:
                                     and statuses[key].get('completed', False)
                                     and statuses[key].get('cached', False)
                                 )
-                                executed_count = completed_iterations - cached_count
+                                failed_count = sum(
+                                    1
+                                    for key in statuses.keys()
+                                    if key.startswith(loopable_action_name + "_")
+                                    and statuses[key].get('failed', False)
+                                )
+                                executed_count = completed_iterations - cached_count - failed_count
 
                                 # Check if running
                                 is_running = any(
@@ -460,6 +555,8 @@ class PipelineStatusDisplay:
                                 status_parts = []
                                 if running_count > 0:
                                     status_parts.append(f"{running_count} running")
+                                if failed_count > 0:
+                                    status_parts.append(f"{failed_count} failed")
                                 if executed_count > 0:
                                     status_parts.append(f"{executed_count} executed")
                                 if cached_count > 0:
@@ -468,13 +565,20 @@ class PipelineStatusDisplay:
 
                                 if is_running:
                                     # Currently running
-                                    if completed_iterations > 0:
-                                        status_lines.append(f"    🔄 {loopable_action_name} ({completed_iterations}/{num_iterations}) {status_str}")
+                                    if completed_iterations > 0 or failed_count > 0:
+                                        if failed_count > 0:
+                                            status_lines.append(f"    🔄 {loopable_action_name} ({completed_iterations}/{num_iterations}) {status_str}")
+                                        else:
+                                            status_lines.append(f"    🔄 {loopable_action_name} ({completed_iterations}/{num_iterations}) {status_str}")
                                     else:
                                         status_lines.append(f"    🔄 {loopable_action_name} (running...)")
-                                elif completed_iterations > 0:
-                                    # Show ✅ for in-progress actions with completed iterations
-                                    if cached_count > 0 and executed_count == 0:
+                                elif completed_iterations > 0 or failed_count > 0:
+                                    # Show ✅ or ❌ for in-progress actions with completed/failed iterations
+                                    if failed_count > 0:
+                                        status_lines.append(
+                                            f"    ❌ {loopable_action_name} ({completed_iterations}/{num_iterations}) {status_str}"
+                                        )
+                                    elif cached_count > 0 and executed_count == 0:
                                         status_lines.append(
                                             f"    ✅ {loopable_action_name} 💾 ({completed_iterations}/{num_iterations}) {status_str}"
                                         )
@@ -493,7 +597,10 @@ class PipelineStatusDisplay:
                     # Regular action
                     if i < current_index:
                         status = statuses.get(action.name, {})
-                        if status.get('cached', False):
+                        # Check if action failed
+                        if status.get('failed', False) or self._check_for_errors(action.name):
+                            status_lines.append(f"  ❌ {action.name} (failed)")
+                        elif status.get('cached', False):
                             status_lines.append(f"  ✅ {action.name} 💾 (from cache)")
                         else:
                             status_lines.append(f"  ✅ {action.name} ✨ (executed)")

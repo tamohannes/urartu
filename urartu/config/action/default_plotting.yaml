@@ -15,6 +15,9 @@ plotting:
   # PNG is always saved, PDF is optional
   save_png: true
   save_pdf: false  # Set to true in action config to enable PDF export
+
+  # Plot data log: when true, plot data is also saved as CSV alongside pickle/plots for a human-readable log
+  save_plot_data_csv: true
   
   # Style defaults
   style:

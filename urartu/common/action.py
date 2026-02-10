@@ -567,6 +567,18 @@ class Action(ABC):
         'cache_dir',  # Cache directory
     }
 
+    # Keys that receive dependency-injected paths; must be normalized for stable cache keys
+    # so that the same logical dependency (e.g. _3's output) produces the same key across runs/machines
+    DEPENDENCY_PATH_KEYS = {
+        'classification_path',
+        'samples_path',
+        'probing_results_path',
+        'attention_results_path',
+        'attention_cache_path',
+        'data_path',
+        'neuron_metrics_path',
+    }
+
     @staticmethod
     def _make_outputs_portable(outputs: Any) -> Any:
         """
@@ -720,6 +732,15 @@ class Action(ABC):
                         f"   ⚠️  CRITICAL: Pipeline-specific fields found in FILTERED config (should be removed!): {pipeline_specific_in_filtered}"
                     )
 
+                # Normalize dependency-injected path keys so cache key is stable across runs/machines
+                for key in Action.DEPENDENCY_PATH_KEYS:
+                    if key in filtered_cfg and filtered_cfg[key]:
+                        val = filtered_cfg[key]
+                        if isinstance(val, (str, Path)):
+                            filtered_cfg[key] = Action._make_path_portable(str(val))
+                        elif isinstance(val, dict):
+                            filtered_cfg[key] = {k: Action._make_path_portable(str(v)) if isinstance(v, (str, Path)) and v else v for k, v in val.items()}
+
                 return filtered_cfg
             return {}
         except Exception:
@@ -746,6 +767,15 @@ class Action(ABC):
                     logger.warning(
                         f"   ⚠️  CRITICAL: Pipeline-specific fields found in FILTERED config (should be removed!): {pipeline_specific_in_filtered}"
                     )
+
+                # Normalize dependency-injected path keys (same as in try branch)
+                for key in Action.DEPENDENCY_PATH_KEYS:
+                    if key in filtered_cfg and filtered_cfg[key]:
+                        val = filtered_cfg[key]
+                        if isinstance(val, (str, Path)):
+                            filtered_cfg[key] = Action._make_path_portable(str(val))
+                        elif isinstance(val, dict):
+                            filtered_cfg[key] = {k: Action._make_path_portable(str(v)) if isinstance(v, (str, Path)) and v else v for k, v in val.items()}
 
                 return filtered_cfg
             return {}

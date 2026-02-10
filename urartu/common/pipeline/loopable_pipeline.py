@@ -726,14 +726,14 @@ class LoopablePipeline(LoopableCacheMixin, LoopableJobsMixin, MultiBlockLoopable
                     self._print_pipeline_status(self.actions, action_statuses, current_progress)
 
                 # Run the action with loop context
-                action_output, was_cached = self._run_action_with_status(action, loop_context=loop_context, iteration_name=iteration_action_name)
+                action_output, was_cached, failed = self._run_action_with_status(action, loop_context=loop_context, iteration_name=iteration_action_name)
 
                 # Store output in nested dict structure
                 if action_name not in self.action_outputs:
                     self.action_outputs[action_name] = {}
                 self.action_outputs[action_name][iteration_id] = action_output
                 self.action_outputs[iteration_action_name] = action_output
-                action_statuses[iteration_action_name] = {'cached': was_cached, 'completed': True, 'running': False}
+                action_statuses[iteration_action_name] = {'cached': was_cached, 'completed': not failed, 'failed': failed, 'running': False}
 
                 # Update base action status
                 has_running_iteration = any(
@@ -1025,9 +1025,12 @@ class LoopablePipeline(LoopableCacheMixin, LoopableJobsMixin, MultiBlockLoopable
                             config_overrides=stage.action_config,
                             outputs_to_track=stage.outputs_to_track,
                         )
-                        action_output, was_cached = self._run_action_with_status(action)
+                        action_output, was_cached, failed = self._run_action_with_status(action)
                         self.action_outputs[stage.action_name] = action_output
-                        logger.info(f"Loaded pre-loopable action '{stage.action_name}' from cache")
+                        if failed:
+                            logger.warning(f"Action '{stage.action_name}' failed during execution")
+                        else:
+                            logger.info(f"Loaded pre-loopable action '{stage.action_name}' from cache")
                     except Exception as e:
                         logger.warning(f"Could not load pre-loopable action '{stage.action_name}': {e}")
         
@@ -1222,8 +1225,10 @@ class LoopablePipeline(LoopableCacheMixin, LoopableJobsMixin, MultiBlockLoopable
                     outputs_to_track=stage.outputs_to_track,
                 )
                 try:
-                    action_output, was_cached = self._run_action_with_status(action)
+                    action_output, was_cached, failed = self._run_action_with_status(action)
                     self.action_outputs[action.name] = action_output
+                    if failed:
+                        logger.warning(f"Action '{action.name}' failed during execution")
                 except Exception as e:
                     logger.warning(f"Error loading action output for {stage.action_name}: {e}")
             elif isinstance(stage, LoopableStage):
@@ -1268,9 +1273,9 @@ class LoopablePipeline(LoopableCacheMixin, LoopableJobsMixin, MultiBlockLoopable
         logger.info("=" * 80)
 
         for i, action in enumerate(regular_actions):
-            action_output, was_cached = self._run_action_with_status(action)
+            action_output, was_cached, failed = self._run_action_with_status(action)
             self.action_outputs[action.name] = action_output
-            action_statuses[action.name] = {'cached': was_cached, 'completed': True}
+            action_statuses[action.name] = {'cached': was_cached, 'completed': not failed, 'failed': failed}
 
             if not action_output.metadata.get("skipped", False):
                 successful_actions += 1
@@ -1296,9 +1301,9 @@ class LoopablePipeline(LoopableCacheMixin, LoopableJobsMixin, MultiBlockLoopable
             logger.info("=" * 80)
 
             for i, action in enumerate(post_loopable_actions):
-                action_output, was_cached = self._run_action_with_status(action)
+                action_output, was_cached, failed = self._run_action_with_status(action)
                 self.action_outputs[action.name] = action_output
-                action_statuses[action.name] = {'cached': was_cached, 'completed': True}
+                action_statuses[action.name] = {'cached': was_cached, 'completed': not failed, 'failed': failed}
 
                 if not action_output.metadata.get("skipped", False):
                     successful_actions += 1
@@ -1349,9 +1354,12 @@ class LoopablePipeline(LoopableCacheMixin, LoopableJobsMixin, MultiBlockLoopable
             logger.info("=" * 80)
             for action in pre_loopable_actions:
                 logger.info(f"🔄 Running pre-loopable action: '{action.name}'")
-                action_output, was_cached = self._run_action_with_status(action)
+                action_output, was_cached, failed = self._run_action_with_status(action)
                 self.action_outputs[action.name] = action_output
-                logger.info(f"  ✅ Completed {action.name}")
+                if failed:
+                    logger.error(f"  ❌ Failed {action.name}")
+                else:
+                    logger.info(f"  ✅ Completed {action.name}")
 
         iteration_num = iteration_idx + 1
         logger.info("=" * 80)
@@ -1391,13 +1399,15 @@ class LoopablePipeline(LoopableCacheMixin, LoopableJobsMixin, MultiBlockLoopable
             iteration_action_name = f"{action_name}_{iteration_id}"
 
             # Run the action with loop context
-            action_output, was_cached = self._run_action_with_status(action, loop_context=loop_context, iteration_name=iteration_action_name)
+            action_output, was_cached, failed = self._run_action_with_status(action, loop_context=loop_context, iteration_name=iteration_action_name)
 
             # Store output in nested dict structure
             if action_name not in self.action_outputs:
                 self.action_outputs[action_name] = {}
             self.action_outputs[action_name][iteration_id] = action_output
             self.action_outputs[iteration_action_name] = action_output
+            if failed:
+                logger.error(f"  ❌ Failed {action_name} (iteration {iteration_num})")
 
             # Save output to disk for dependency job to load
             # Save to run_dir / array_tasks / task_{iteration_idx} / action_name / output.pkl
@@ -1928,8 +1938,11 @@ class LoopablePipeline(LoopableCacheMixin, LoopableJobsMixin, MultiBlockLoopable
         # Run post-loopable actions
         for action in post_loopable_actions:
             logger.info(f"🔄 Running post-loopable action: '{action.name}'")
-            action_output, was_cached = self._run_action_with_status(action)
+            action_output, was_cached, failed = self._run_action_with_status(action)
             self.action_outputs[action.name] = action_output
-            logger.info(f"  ✅ Completed {action.name}")
+            if failed:
+                logger.error(f"  ❌ Failed {action.name}")
+            else:
+                logger.info(f"  ✅ Completed {action.name}")
 
         logger.info("✅ All post-loopable actions completed")

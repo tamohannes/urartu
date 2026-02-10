@@ -3,8 +3,12 @@ Unified plotting framework for Urartu actions.
 
 Provides PlottingMixin for actions to inherit from, and Plotter utility class
 for managing plot styles, color palettes, and saving plots.
+
+When save_plot_data_csv is enabled (default: true), plot data is also written
+as CSV alongside pickle/plots so there is always a human-readable log of plot data.
 """
 
+import csv
 import logging
 import pickle
 from pathlib import Path
@@ -16,6 +20,113 @@ from omegaconf import DictConfig, OmegaConf
 from urartu.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def _to_list(x: Any) -> List[Any]:
+    """Convert array-like or scalar to a flat list for CSV writing."""
+    if hasattr(x, "tolist"):
+        return getattr(x, "tolist")()
+    if isinstance(x, (list, tuple)):
+        return list(x)
+    return [x]
+
+
+def write_plot_data_csv(plot_data: Dict[str, Any], csv_path: Path) -> List[Path]:
+    """
+    Write plot data to one or more CSV files for a human-readable log.
+
+    Supports:
+    - Dict of 1D same-length arrays/lists -> one CSV with columns = keys.
+    - Dict with key "data" or "table" as list of dicts -> one CSV (rows = dicts).
+    - Dict of 2D arrays -> one CSV per key (rows = rows, columns = 0..n-1).
+    - Otherwise: one CSV per key that is 1D (column with key name) or 2D.
+
+    Args:
+        plot_data: Dictionary of plot data (arrays, lists, list of dicts).
+        csv_path: Target path (file or directory). If file, stem is used for multiple outputs.
+
+    Returns:
+        List of paths to written CSV files.
+    """
+    written: List[Path] = []
+    csv_path = Path(csv_path)
+    if csv_path.suffix.lower() != ".csv":
+        base_dir = csv_path
+        stem = "plot_data"
+    else:
+        base_dir = csv_path.parent
+        stem = csv_path.stem
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    # Prefer "data" or "table" as list of dicts -> single CSV
+    for key in ("data", "table"):
+        if key in plot_data and isinstance(plot_data[key], (list, tuple)) and plot_data[key]:
+            first = plot_data[key][0]
+            if isinstance(first, dict):
+                out = base_dir / f"{stem}.csv" if stem else base_dir / f"{key}.csv"
+                fieldnames = list(first.keys())
+                with open(out, "w", newline="", encoding="utf-8") as f:
+                    w = csv.DictWriter(f, fieldnames=fieldnames)
+                    w.writeheader()
+                    for row in plot_data[key]:
+                        w.writerow({k: row[k] for k in fieldnames})
+                written.append(out)
+                return written
+
+    # Dict of 1D same-length arrays -> one CSV
+    lengths = {}
+    rows_by_key: Dict[str, List[Any]] = {}
+    for k, v in plot_data.items():
+        lst = _to_list(v)
+        if not lst:
+            continue
+        try:
+            n = len(lst)
+            lengths[k] = n
+            rows_by_key[k] = lst
+        except TypeError:
+            continue
+    if rows_by_key:
+        lens = set(lengths.values())
+        if len(lens) == 1:
+            n = list(lens)[0]
+            out = base_dir / f"{stem}.csv"
+            with open(out, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(list(rows_by_key.keys()))
+                for i in range(n):
+                    w.writerow([rows_by_key[k][i] for k in rows_by_key])
+            written.append(out)
+            return written
+
+    # Per-key: 1D as single column, 2D as rows x cols
+    for k, v in plot_data.items():
+        try:
+            lst = _to_list(v)
+        except Exception:
+            continue
+        if not lst:
+            continue
+        out = base_dir / f"{stem}_{k}.csv"
+        if isinstance(lst[0], (list, tuple)) or (hasattr(v, "ndim") and getattr(v, "ndim") == 2):
+            # 2D
+            rows = [lst] if not isinstance(lst[0], (list, tuple)) else lst
+            rows = [_to_list(r) for r in rows]
+            ncols = len(rows[0]) if rows else 0
+            with open(out, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(["index"] + [f"col_{j}" for j in range(ncols)])
+                for i, row in enumerate(rows):
+                    w.writerow([i] + list(row))
+            written.append(out)
+        else:
+            with open(out, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow([k])
+                for x in lst:
+                    w.writerow([x])
+            written.append(out)
+    return written
 
 
 class Plotter:
@@ -279,12 +390,20 @@ class PlottingMixin:
         return plots_dir
 
     def save_plot(
-        self, fig, filename: str, subdirectory: Optional[str] = None, dpi: Optional[int] = None, output_dir: Optional[Path] = None
+        self,
+        fig,
+        filename: str,
+        subdirectory: Optional[str] = None,
+        dpi: Optional[int] = None,
+        output_dir: Optional[Path] = None,
+        plot_data: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Path, Optional[Path]]:
         """
         Save a plot figure to the plots directory.
 
         Always saves PNG format. Optionally saves PDF if configured.
+        When plot_data is provided and save_plot_data_csv is enabled (default: true),
+        also saves the plot data as CSV alongside the image for a human-readable log.
 
         Args:
             fig: Matplotlib figure object
@@ -292,6 +411,7 @@ class PlottingMixin:
             subdirectory: Optional subdirectory within plots (ignored if output_dir is provided)
             dpi: Optional DPI override (uses config default if not provided)
             output_dir: Optional full path to output directory (overrides plots_dir + subdirectory)
+            plot_data: Optional dict of data used to generate the plot; saved as CSV when save_plot_data_csv is true
 
         Returns:
             Tuple of (png_path, pdf_path) where pdf_path is None if PDF not enabled
@@ -319,6 +439,16 @@ class PlottingMixin:
             pdf_path = plots_dir / f"{filename}.pdf"
             fig.savefig(pdf_path, dpi=dpi, bbox_inches='tight')
             logger.debug(f"Saved plot: {pdf_path}")
+
+        # Save plot data as CSV when enabled (log of plot data)
+        if plot_data is not None and plot_config.get("save_plot_data_csv", True):
+            csv_path = plots_dir / f"{filename}.csv"
+            try:
+                paths = write_plot_data_csv(plot_data, csv_path)
+                for p in paths:
+                    logger.debug(f"Saved plot data CSV: {p}")
+            except Exception as e:
+                logger.warning(f"Could not save plot data CSV for {filename}: {e}")
 
         return (png_path, pdf_path)
 
@@ -421,6 +551,20 @@ class PlottingMixin:
         with open(cache_path, "wb") as f:
             pickle.dump(plot_data, f)
         logger.info(f"💾 Saved plot data to {cache_path}")
+
+        # Also save as CSV when enabled (human-readable log of plot data)
+        plot_config = self.get_plot_config()
+        if plot_config.get("save_plot_data_csv", True):
+            csv_stem = Path(filename).stem
+            cache_dir = cache_path.parent
+            csv_path = cache_dir / f"{csv_stem}.csv"
+            try:
+                paths = write_plot_data_csv(plot_data, csv_path)
+                for p in paths:
+                    logger.debug(f"Saved plot data CSV: {p}")
+            except Exception as e:
+                logger.warning(f"Could not save plot data CSV for {filename}: {e}")
+
         return cache_path
 
     def load_plot_data(self, filename: str = "plot_data.pkl") -> Optional[Dict[str, Any]]:

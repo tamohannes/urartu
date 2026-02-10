@@ -319,7 +319,7 @@ class MultiBlockLoopableMixin:
                         continue
                     
                     # Run action with loop context
-                    action_output, was_cached = self._run_action_with_status(
+                    action_output, was_cached, failed = self._run_action_with_status(
                         action,
                         loop_context=loop_context,
                         iteration_name=iteration_id,
@@ -329,6 +329,8 @@ class MultiBlockLoopableMixin:
                     if action_name not in self.action_outputs:
                         self.action_outputs[action_name] = {}
                     self.action_outputs[action_name][iteration_id] = action_output
+                    if failed:
+                        logger.error(f"  ❌ Failed {action_name} (iteration {iteration_id})")
                     
                     # Also store with iteration-specific key for backward compatibility
                     iteration_action_name = f"{action_name}_{iteration_id}"

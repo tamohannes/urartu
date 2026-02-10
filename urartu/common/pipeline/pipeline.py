@@ -468,7 +468,7 @@ class Pipeline:
 
     def _run_action_with_status(
         self, pipeline_action: PipelineAction, loop_context: Optional[Dict[str, Any]] = None, iteration_name: Optional[str] = None
-    ) -> Tuple[ActionOutput, bool]:
+    ) -> Tuple[ActionOutput, bool, bool]:
         """
         Execute a single pipeline action and return its output with cache status.
 
@@ -478,10 +478,11 @@ class Pipeline:
             iteration_name: Optional iteration-aware name for the action output
 
         Returns:
-            Tuple of (ActionOutput, was_cached: bool)
+            Tuple of (ActionOutput, was_cached: bool, failed: bool)
         """
         # Track if cache was used
         was_cached = False
+        failed = False
 
         # Log action start
         logger.debug(f"\n{'='*80}")
@@ -491,14 +492,25 @@ class Pipeline:
             logger.debug(f"  Loop context: {loop_context}")
         logger.debug(f"{'='*80}")
 
-        # Get the action output (will check cache internally)
-        action_output = self._run_action(pipeline_action, loop_context=loop_context, iteration_name=iteration_name)
+        try:
+            # Get the action output (will check cache internally)
+            action_output = self._run_action(pipeline_action, loop_context=loop_context, iteration_name=iteration_name)
 
-        # Check if it came from cache
-        if hasattr(action_output, 'metadata') and action_output.metadata.get('from_cache', False):
-            was_cached = True
+            # Check if it came from cache
+            if hasattr(action_output, 'metadata') and action_output.metadata.get('from_cache', False):
+                was_cached = True
+        except Exception as e:
+            # Action failed - create a failed ActionOutput
+            logger.error(f"❌ Action {log_name} failed: {e}", exc_info=True)
+            failed = True
+            action_output = ActionOutput(
+                name=log_name,
+                action_name=pipeline_action.action_name,
+                outputs={},
+                metadata={"failed": True, "error": str(e)},
+            )
 
-        return action_output, was_cached
+        return action_output, was_cached, failed
 
     def _run_action(
         self, pipeline_action: PipelineAction, loop_context: Optional[Dict[str, Any]] = None, iteration_name: Optional[str] = None
@@ -1073,11 +1085,11 @@ class Pipeline:
 
         for i, action in enumerate(regular_actions):
             # Run the action (it will return metadata about cache usage)
-            action_output, was_cached = self._run_action_with_status(action)
+            action_output, was_cached, failed = self._run_action_with_status(action)
 
             # Store output for use by later actions
             self.action_outputs[action.name] = action_output
-            action_statuses[action.name] = {'cached': was_cached, 'completed': True}
+            action_statuses[action.name] = {'cached': was_cached, 'completed': not failed, 'failed': failed}
 
             # Debug mode: show detailed info
             logger.debug(f"🔍 DEBUG: Stored outputs for '{action.name}' in action_outputs")

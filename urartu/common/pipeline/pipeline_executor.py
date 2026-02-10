@@ -97,10 +97,12 @@ class PipelineExecutor:
         )
         
         # Run the action
-        action_output, was_cached = self.pipeline._run_action_with_status(action)
+        action_output, was_cached, failed = self.pipeline._run_action_with_status(action)
         self.pipeline.action_outputs[action.name] = action_output
         
-        if was_cached:
+        if failed:
+            logger.error(f"Action '{stage.action_name}' failed")
+        elif was_cached:
             logger.info(f"Action '{stage.action_name}' loaded from cache")
         else:
             logger.info(f"Action '{stage.action_name}' completed successfully")
@@ -445,7 +447,7 @@ class PipelineExecutor:
                 )
                 
                 # Run the action with loop context
-                action_output, was_cached = self.pipeline._run_action_with_status(
+                action_output, was_cached, failed = self.pipeline._run_action_with_status(
                     action,
                     loop_context=loop_context,
                     iteration_name=iteration_id,
@@ -463,7 +465,10 @@ class PipelineExecutor:
                 # Save output to disk for potential dependency jobs
                 self._save_iteration_output(action_output, action_name, iteration_id, iteration_idx, stage.stage_idx)
                 
-                logger.info(f"Completed {action_name} (iteration {iteration_num})")
+                if failed:
+                    logger.error(f"Failed {action_name} (iteration {iteration_num})")
+                else:
+                    logger.info(f"Completed {action_name} (iteration {iteration_num})")
         
         logger.info(f"Completed loopable stage {stage.stage_idx}")
     
